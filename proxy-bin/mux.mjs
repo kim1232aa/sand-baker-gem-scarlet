@@ -8,7 +8,6 @@ const BIN = path.dirname(fileURLToPath(import.meta.url));
 const SOCK_DIR = path.join(BIN, "socks");
 const ADMIN = { host: "127.0.0.1", port: 8080 };
 const XRAY_PORT = 38080;
-const TAGS = ["jp", "kr", "sg", "au", "us", "ca", "de", "nl", "fr", "gb", "se", "ch", "ovpn-jp", "ovpn-kr", "ovpn-ro"];
 
 function pathname(url = "/") {
   return url.split("?")[0];
@@ -19,11 +18,9 @@ function isVlessPath(path) {
 }
 
 function destFor(path) {
-  const m = /^\/res-([a-z0-9]+)$/.exec(path);
+  const m = /^\/res-([a-z0-9-]+)$/.exec(path);
   if (!m) return { port: XRAY_PORT };
-  const tag = TAGS.includes(m[1]) ? m[1] : "";
-  if (!tag) return { port: XRAY_PORT };
-  const sock = `${SOCK_DIR}/in-${tag}.sock`;
+  const sock = `${SOCK_DIR}/in-${m[1]}.sock`;
   if (fs.existsSync(sock)) return { sock };
   return { port: XRAY_PORT };
 }

@@ -37,8 +37,6 @@ export function Overview() {
   const lastLatency = useAdminStore((s) => s.lastLatency);
   const logs = useAdminStore((s) => s.logs);
   const busy = useAdminStore((s) => s.failoverBusy);
-  const probeCount = useAdminStore((s) => s.probeCount);
-  const startedAt = useAdminStore((s) => s.watchdogStartedAt);
   const hydrated = useAdminStore((s) => s.hydrated);
   const [confirm, setConfirm] = useState(false);
   const [tunnelHost, setTunnelHost] = useState("");
@@ -47,8 +45,7 @@ export function Overview() {
   const link = vlessLink(nodeHost, uuid);
   const clashUrl = nodeHost ? `https://${nodeHost}${SUB_PATH}` : "";
   const [pub, setPub] = useState({ total: 0, front: 0, exit: 0 });
-  const runMin =
-    hydrated && startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 60000)) : 0;
+  const [keep, setKeep] = useState({ on: false, at: "" });
 
   useEffect(() => {
     let cancelled = false;
@@ -59,11 +56,14 @@ export function Overview() {
           host?: string;
           live?: boolean;
           counts?: { total: number; front: number; exit: number };
+          procs?: { supervise?: boolean };
+          heartbeat?: { at?: string };
         };
         if (cancelled) return;
         if (d.host) setTunnelHost(d.host);
         setLive(Boolean(d.live));
         if (d.counts) setPub(d.counts);
+        setKeep({ on: Boolean(d.procs?.supervise), at: d.heartbeat?.at ?? "" });
       } catch {
         if (!cancelled) setLive(false);
       }
@@ -108,9 +108,9 @@ export function Overview() {
           hint={`CF ${pub.front} · 出口 ${pub.exit}`}
         />
         <Stat
-          label="探活次数"
-          value={hydrated ? String(probeCount) : "—"}
-          hint={runMin ? `运行 ${runMin} 分钟` : "—"}
+          label="保活"
+          value={keep.on ? "运行中" : "已停"}
+          hint={keep.at ? formatTime(Date.parse(keep.at)) : "本机 20s 巡检"}
         />
       </div>
 

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 BIN = Path(os.environ.get("PROXY_BIN") or Path(__file__).resolve().parents[1])
@@ -18,16 +19,28 @@ PID_FILE = BIN / "slots.pid"
 PLAN = [
     {"id": "jp", "country": "JP", "port": 9051, "exit": "{jp}", "strict": False},
     {"id": "us", "country": "US", "port": 9052, "exit": "{us}", "strict": False},
-    {"id": "de", "country": "DE", "port": 9053, "exit": "{de}", "strict": True},
-    {"id": "nl", "country": "NL", "port": 9054, "exit": "{nl}", "strict": True},
+    {"id": "us2", "country": "US", "port": 9063, "exit": "{us}", "strict": False},
+    {"id": "de", "country": "DE", "port": 9053, "exit": "{de}", "strict": False},
+    {"id": "de2", "country": "DE", "port": 9065, "exit": "{de}", "strict": False},
+    {"id": "nl", "country": "NL", "port": 9054, "exit": "{nl}", "strict": False},
     {"id": "kr", "country": "KR", "port": 9055, "exit": "{kr}", "strict": False},
     {"id": "sg", "country": "SG", "port": 9056, "exit": "{sg}", "strict": False},
     {"id": "au", "country": "AU", "port": 9057, "exit": "{au}", "strict": False},
-    {"id": "ca", "country": "CA", "port": 9058, "exit": "{ca}", "strict": True},
-    {"id": "fr", "country": "FR", "port": 9059, "exit": "{fr}", "strict": True},
-    {"id": "gb", "country": "GB", "port": 9060, "exit": "{gb}", "strict": True},
-    {"id": "se", "country": "SE", "port": 9061, "exit": "{se}", "strict": True},
+    {"id": "ca", "country": "CA", "port": 9058, "exit": "{ca}", "strict": False},
+    {"id": "ca2", "country": "CA", "port": 9074, "exit": "{ca}", "strict": False},
+    {"id": "fr", "country": "FR", "port": 9059, "exit": "{fr}", "strict": False},
+    {"id": "fr2", "country": "FR", "port": 9066, "exit": "{fr}", "strict": False},
+    {"id": "gb", "country": "GB", "port": 9060, "exit": "{gb}", "strict": False},
+    {"id": "gb2", "country": "GB", "port": 9064, "exit": "{gb}", "strict": False},
+    {"id": "se", "country": "SE", "port": 9061, "exit": "{se}", "strict": False},
     {"id": "ch", "country": "CH", "port": 9062, "exit": "{ch}", "strict": False},
+    {"id": "ru", "country": "RU", "port": 9067, "exit": "{ru}", "strict": False},
+    {"id": "ru2", "country": "RU", "port": 9068, "exit": "{ru}", "strict": False},
+    {"id": "vn", "country": "VN", "port": 9069, "exit": "{vn}", "strict": False},
+    {"id": "th", "country": "TH", "port": 9070, "exit": "{th}", "strict": False},
+    {"id": "it", "country": "IT", "port": 9071, "exit": "{it}", "strict": False},
+    {"id": "es", "country": "ES", "port": 9072, "exit": "{es}", "strict": False},
+    {"id": "pl", "country": "PL", "port": 9073, "exit": "{pl}", "strict": False},
 ]
 
 ENV = {**os.environ, "LD_LIBRARY_PATH": str(NAT / "lib")}
@@ -62,15 +75,24 @@ def read_pid(path: Path) -> int:
         return 0
 
 
+def unix_socks(slot: dict) -> Path:
+    return TOR_ROOT / slot["id"] / "socks.sock"
+
+
 def write_torrc(slot: dict) -> Path:
     data = TOR_ROOT / slot["id"]
     data.mkdir(parents=True, exist_ok=True)
     (data / "data").mkdir(exist_ok=True)
+    sock = unix_socks(slot)
+    try:
+        sock.unlink()
+    except FileNotFoundError:
+        pass
     rc = data / "torrc"
     rc.write_text(
         "\n".join(
             [
-                f"SocksPort 127.0.0.1:{slot['port']}",
+                f"SocksPort unix:{sock} WorldWritable",
                 f"DataDirectory {data / 'data'}",
                 f"GeoIPFile {NAT / 'geoip'}",
                 f"GeoIPv6File {NAT / 'geoip6'}",
@@ -85,6 +107,33 @@ def write_torrc(slot: dict) -> Path:
         )
     )
     return rc
+
+
+def stop_tor(slot: dict) -> None:
+    data = TOR_ROOT / slot["id"]
+    pid = read_pid(data / "tor.pid")
+    if pid_alive(pid):
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+        for _ in range(20):
+            time.sleep(0.05)
+            if not pid_alive(pid):
+                break
+        if pid_alive(pid):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+    try:
+        unix_socks(slot).unlink()
+    except FileNotFoundError:
+        pass
+    try:
+        (data / "tor.pid").unlink()
+    except FileNotFoundError:
+        pass
 
 
 def start_tor(slot: dict) -> None:
@@ -105,7 +154,7 @@ def start_tor(slot: dict) -> None:
         time.sleep(0.1)
         if read_pid(data / "tor.pid"):
             break
-    stamp(f"tor {slot['id']} pid={read_pid(data / 'tor.pid') or proc.pid} socks=127.0.0.1:{slot['port']}")
+    stamp(f"tor {slot['id']} pid={read_pid(data / 'tor.pid') or proc.pid} socks=unix:{unix_socks(slot).name}")
 
 
 def bootstrapped(slot: dict) -> bool:
@@ -139,30 +188,52 @@ def probe_socks(port: int) -> str:
 
 
 def snapshot() -> list[dict]:
-    rows = []
-    for slot in PLAN:
+    def one(slot: dict) -> dict:
         pid = read_pid(TOR_ROOT / slot["id"] / "tor.pid")
         ready = pid_alive(pid) and bootstrapped(slot)
         ip = probe_socks(slot["port"]) if ready else ""
-        rows.append(
-            {
-                "id": slot["id"],
-                "country": slot["country"],
-                "socks": slot["port"],
-                "state": "ready" if ip else ("boot" if pid_alive(pid) else "down"),
-                "egress_ip": ip,
-                "pid": pid if pid_alive(pid) else 0,
-            }
-        )
-        stamp(f"slot {slot['id']} state={rows[-1]['state']} ip={ip or '-'}")
-    return rows
+        row = {
+            "id": slot["id"],
+            "country": slot["country"],
+            "socks": slot["port"],
+            "state": "ready" if ip else ("boot" if pid_alive(pid) else "down"),
+            "egress_ip": ip,
+            "pid": pid if pid_alive(pid) else 0,
+            "kind": "tor",
+        }
+        stamp(f"slot {slot['id']} state={row['state']} ip={ip or '-'}")
+        return row
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(one, PLAN))
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        ip = r.get("egress_ip") or ""
+        if ip and ip in seen:
+            out.append({**r, "state": "boot", "egress_ip": ""})
+        else:
+            if ip:
+                seen.add(ip)
+            out.append(r)
+    return out
 
 
 def loop() -> None:
     PID_FILE.write_text(str(os.getpid()) + "\n")
     stamp("slots start")
+    from kui.xray_sync import ensure as sync_xray
+    from kui.socks_gate import start as start_gate
+
+    if sync_xray(PLAN):
+        stamp("xray.json tor inbounds added")
+    for slot in PLAN:
+        stop_tor(slot)
+    time.sleep(0.4)
     for slot in PLAN:
         start_tor(slot)
+    start_gate(PLAN, TOR_ROOT)
+    stamp("socks gate on 127.0.0.1 (SOCKS5 only, HTTP closed)")
     while True:
         for slot in PLAN:
             start_tor(slot)
