@@ -1,6 +1,14 @@
 export type ExitStatus = "ok" | "down";
 export type ExitKind = "direct" | "socks5" | "http";
-export type ViewId = "overview" | "exits" | "logs" | "settings";
+export type ViewId =
+  | "overview"
+  | "relays"
+  | "tor"
+  | "vpn"
+  | "socks"
+  | "exits"
+  | "logs"
+  | "settings";
 
 export interface Exit {
   id: string;

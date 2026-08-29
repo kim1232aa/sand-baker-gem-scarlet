@@ -1,10 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
+  Cable,
+  Globe2,
   LayoutDashboard,
   Menu,
+  Network,
   ScrollText,
   Settings2,
+  Shield,
   Waypoints,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,10 +18,15 @@ import { LiveDot } from "@/components/status-badge";
 import { useAdminStore } from "@/lib/store";
 import type { ViewId } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { relayFetch } from "@/lib/relays";
 
 const NAV: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "概览", icon: LayoutDashboard },
-  { id: "exits", label: "出站", icon: Waypoints },
+  { id: "relays", label: "中继", icon: Network },
+  { id: "tor", label: "Tor", icon: Shield },
+  { id: "vpn", label: "VPN", icon: Globe2 },
+  { id: "socks", label: "SOCKS", icon: Cable },
+  { id: "exits", label: "代理池", icon: Waypoints },
   { id: "logs", label: "日志", icon: ScrollText },
   { id: "settings", label: "设置", icon: Settings2 },
 ];
@@ -34,7 +43,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     async function pull() {
       try {
-        const res = await fetch("/api/stack", { cache: "no-store" });
+        const res = await relayFetch("/api/stack");
         const d = (await res.json()) as { host?: string; live?: boolean };
         if (cancelled) return;
         if (d.host) setHost(d.host);

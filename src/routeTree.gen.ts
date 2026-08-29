@@ -15,6 +15,8 @@ import { Route as VlessRouteImport } from './routes/vless'
 import { Route as ApiStackRouteImport } from './routes/api/stack'
 import { Route as Sub7e4c91ab2d08f3c6LinksRouteImport } from './routes/sub-7e4c91ab2d08f3c6.links'
 import { Route as Sub7e4c91ab2d08f3c6SbDotjsonRouteImport } from './routes/sub-7e4c91ab2d08f3c6.sb[.]json'
+import { Route as Sub7e4c91ab2d08f3c6SocksDottxtRouteImport } from './routes/sub-7e4c91ab2d08f3c6.socks[.]txt'
+import { Route as Sub7e4c91ab2d08f3c6SocksDotyamlRouteImport } from './routes/sub-7e4c91ab2d08f3c6.socks[.]yaml'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -48,6 +50,18 @@ const Sub7e4c91ab2d08f3c6SbDotjsonRoute =
     path: '/sb.json',
     getParentRoute: () => Sub7e4c91ab2d08f3c6Route,
   } as any)
+const Sub7e4c91ab2d08f3c6SocksDottxtRoute =
+  Sub7e4c91ab2d08f3c6SocksDottxtRouteImport.update({
+    id: '/socks.txt',
+    path: '/socks.txt',
+    getParentRoute: () => Sub7e4c91ab2d08f3c6Route,
+  } as any)
+const Sub7e4c91ab2d08f3c6SocksDotyamlRoute =
+  Sub7e4c91ab2d08f3c6SocksDotyamlRouteImport.update({
+    id: '/socks.yaml',
+    path: '/socks.yaml',
+    getParentRoute: () => Sub7e4c91ab2d08f3c6Route,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -56,6 +70,8 @@ export interface FileRoutesByFullPath {
   '/api/stack': typeof ApiStackRoute
   '/sub-7e4c91ab2d08f3c6/links': typeof Sub7e4c91ab2d08f3c6LinksRoute
   '/sub-7e4c91ab2d08f3c6/sb.json': typeof Sub7e4c91ab2d08f3c6SbDotjsonRoute
+  '/sub-7e4c91ab2d08f3c6/socks.txt': typeof Sub7e4c91ab2d08f3c6SocksDottxtRoute
+  '/sub-7e4c91ab2d08f3c6/socks.yaml': typeof Sub7e4c91ab2d08f3c6SocksDotyamlRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -64,6 +80,8 @@ export interface FileRoutesByTo {
   '/api/stack': typeof ApiStackRoute
   '/sub-7e4c91ab2d08f3c6/links': typeof Sub7e4c91ab2d08f3c6LinksRoute
   '/sub-7e4c91ab2d08f3c6/sb.json': typeof Sub7e4c91ab2d08f3c6SbDotjsonRoute
+  '/sub-7e4c91ab2d08f3c6/socks.txt': typeof Sub7e4c91ab2d08f3c6SocksDottxtRoute
+  '/sub-7e4c91ab2d08f3c6/socks.yaml': typeof Sub7e4c91ab2d08f3c6SocksDotyamlRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -73,6 +91,8 @@ export interface FileRoutesById {
   '/api/stack': typeof ApiStackRoute
   '/sub-7e4c91ab2d08f3c6/links': typeof Sub7e4c91ab2d08f3c6LinksRoute
   '/sub-7e4c91ab2d08f3c6/sb.json': typeof Sub7e4c91ab2d08f3c6SbDotjsonRoute
+  '/sub-7e4c91ab2d08f3c6/socks.txt': typeof Sub7e4c91ab2d08f3c6SocksDottxtRoute
+  '/sub-7e4c91ab2d08f3c6/socks.yaml': typeof Sub7e4c91ab2d08f3c6SocksDotyamlRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -83,6 +103,8 @@ export interface FileRouteTypes {
     | '/api/stack'
     | '/sub-7e4c91ab2d08f3c6/links'
     | '/sub-7e4c91ab2d08f3c6/sb.json'
+    | '/sub-7e4c91ab2d08f3c6/socks.txt'
+    | '/sub-7e4c91ab2d08f3c6/socks.yaml'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -91,6 +113,8 @@ export interface FileRouteTypes {
     | '/api/stack'
     | '/sub-7e4c91ab2d08f3c6/links'
     | '/sub-7e4c91ab2d08f3c6/sb.json'
+    | '/sub-7e4c91ab2d08f3c6/socks.txt'
+    | '/sub-7e4c91ab2d08f3c6/socks.yaml'
   id:
     | '__root__'
     | '/'
@@ -99,6 +123,8 @@ export interface FileRouteTypes {
     | '/api/stack'
     | '/sub-7e4c91ab2d08f3c6/links'
     | '/sub-7e4c91ab2d08f3c6/sb.json'
+    | '/sub-7e4c91ab2d08f3c6/socks.txt'
+    | '/sub-7e4c91ab2d08f3c6/socks.yaml'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -152,17 +178,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Sub7e4c91ab2d08f3c6SbDotjsonRouteImport
       parentRoute: typeof Sub7e4c91ab2d08f3c6Route
     }
+    '/sub-7e4c91ab2d08f3c6/socks.txt': {
+      id: '/sub-7e4c91ab2d08f3c6/socks.txt'
+      path: '/socks.txt'
+      fullPath: '/sub-7e4c91ab2d08f3c6/socks.txt'
+      preLoaderRoute: typeof Sub7e4c91ab2d08f3c6SocksDottxtRouteImport
+      parentRoute: typeof Sub7e4c91ab2d08f3c6Route
+    }
+    '/sub-7e4c91ab2d08f3c6/socks.yaml': {
+      id: '/sub-7e4c91ab2d08f3c6/socks.yaml'
+      path: '/socks.yaml'
+      fullPath: '/sub-7e4c91ab2d08f3c6/socks.yaml'
+      preLoaderRoute: typeof Sub7e4c91ab2d08f3c6SocksDotyamlRouteImport
+      parentRoute: typeof Sub7e4c91ab2d08f3c6Route
+    }
   }
 }
 
 interface Sub7e4c91ab2d08f3c6RouteChildren {
   Sub7e4c91ab2d08f3c6LinksRoute: typeof Sub7e4c91ab2d08f3c6LinksRoute
   Sub7e4c91ab2d08f3c6SbDotjsonRoute: typeof Sub7e4c91ab2d08f3c6SbDotjsonRoute
+  Sub7e4c91ab2d08f3c6SocksDottxtRoute: typeof Sub7e4c91ab2d08f3c6SocksDottxtRoute
+  Sub7e4c91ab2d08f3c6SocksDotyamlRoute: typeof Sub7e4c91ab2d08f3c6SocksDotyamlRoute
 }
 
 const Sub7e4c91ab2d08f3c6RouteChildren: Sub7e4c91ab2d08f3c6RouteChildren = {
   Sub7e4c91ab2d08f3c6LinksRoute: Sub7e4c91ab2d08f3c6LinksRoute,
   Sub7e4c91ab2d08f3c6SbDotjsonRoute: Sub7e4c91ab2d08f3c6SbDotjsonRoute,
+  Sub7e4c91ab2d08f3c6SocksDottxtRoute: Sub7e4c91ab2d08f3c6SocksDottxtRoute,
+  Sub7e4c91ab2d08f3c6SocksDotyamlRoute: Sub7e4c91ab2d08f3c6SocksDotyamlRoute,
 }
 
 const Sub7e4c91ab2d08f3c6RouteWithChildren =

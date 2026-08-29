@@ -136,8 +136,14 @@ def stop_tor(slot: dict) -> None:
         pass
 
 
+def disabled(slot: dict) -> bool:
+    return (TOR_ROOT / slot["id"] / "DISABLED").exists()
+
+
 def start_tor(slot: dict) -> None:
     data = TOR_ROOT / slot["id"]
+    if disabled(slot):
+        return
     pid = read_pid(data / "tor.pid")
     if pid_alive(pid):
         return
@@ -189,6 +195,19 @@ def probe_socks(port: int) -> str:
 
 def snapshot() -> list[dict]:
     def one(slot: dict) -> dict:
+        if disabled(slot):
+            row = {
+                "id": slot["id"],
+                "country": slot["country"],
+                "socks": slot["port"],
+                "state": "down",
+                "egress_ip": "",
+                "pid": 0,
+                "kind": "tor",
+                "disabled": True,
+            }
+            stamp(f"slot {slot['id']} state=down disabled")
+            return row
         pid = read_pid(TOR_ROOT / slot["id"] / "tor.pid")
         ready = pid_alive(pid) and bootstrapped(slot)
         ip = probe_socks(slot["port"]) if ready else ""
@@ -236,7 +255,10 @@ def loop() -> None:
     stamp("socks gate on 127.0.0.1 (SOCKS5 only, HTTP closed)")
     while True:
         for slot in PLAN:
-            start_tor(slot)
+            if disabled(slot):
+                stop_tor(slot)
+            else:
+                start_tor(slot)
         write_status(snapshot())
         time.sleep(45)
 

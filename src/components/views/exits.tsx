@@ -32,18 +32,27 @@ export function ExitsView() {
   const [reveal, setReveal] = useState(false);
   const [live, setLive] = useState(false);
   const [host, setHost] = useState("");
-  const [slotMap, setSlotMap] = useState<Record<string, { state: string; egress_ip: string; country: string }>>({});
+  const [slotMap, setSlotMap] = useState<
+    Record<string, { state: string; egress_ip: string; country: string; kind?: string }>
+  >({});
+  const setView = useAdminStore((s) => s.setView);
 
   useEffect(() => {
     void fetch("/api/stack")
       .then((r) => r.json())
-      .then((d: { live?: boolean; host?: string; slots?: { id: string; state: string; egress_ip: string; country: string }[] }) => {
-        setLive(Boolean(d.live));
-        if (d.host) setHost(d.host);
-        const map: Record<string, { state: string; egress_ip: string; country: string }> = {};
-        for (const s of d.slots ?? []) map[s.id] = s;
-        setSlotMap(map);
-      })
+      .then(
+        (d: {
+          live?: boolean;
+          host?: string;
+          slots?: { id: string; state: string; egress_ip: string; country: string; kind?: string }[];
+        }) => {
+          setLive(Boolean(d.live));
+          if (d.host) setHost(d.host);
+          const map: Record<string, { state: string; egress_ip: string; country: string; kind?: string }> = {};
+          for (const s of d.slots ?? []) map[s.id] = s;
+          setSlotMap(map);
+        },
+      )
       .catch(() => {});
   }, []);
 
@@ -62,11 +71,22 @@ export function ExitsView() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <header>
-        <p className="text-xs font-medium tracking-widest text-subtle uppercase">Outbounds</p>
-        <h1 className="font-display mt-1 text-2xl font-medium tracking-tight">出站</h1>
+        <p className="text-xs font-medium tracking-widest text-subtle uppercase">Proxy pool</p>
+        <h1 className="font-display mt-1 text-2xl font-medium tracking-tight">代理池</h1>
         <p className="mt-1 text-sm text-muted">
-          下面只显示已经拨通的 Tor 电路。没通的国家不会进订阅。代理池仍可手动加 socks5/http。
+          真实 Tor / OpenVPN 出口请到专用页管理。这里保留手动 socks5/http 池，以及出口摘要。
         </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => setView("tor")}>
+            Tor 管理
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setView("vpn")}>
+            VPN 管理
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setView("socks")}>
+            SOCKS 订阅
+          </Button>
+        </div>
       </header>
 
       <form
@@ -157,37 +177,40 @@ export function ExitsView() {
       </ul>
 
       <p className="text-xs font-medium tracking-widest text-subtle uppercase">
-        真实出口 · {Object.values(slotMap).filter((s) => s.state === "ready").length} 条已通
+        真实出口摘要 · {Object.values(slotMap).filter((s) => s.state === "ready").length} 条已通
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {Object.entries(slotMap).map(([id, st]) => {
-          const ok = st.state === "ready";
-          return (
-            <article key={id} className="rounded-lg border border-border bg-surface p-4">
-              <p className="flex items-center justify-between gap-2 text-sm font-medium">
-                <span className="flex items-center gap-2">
-                  <LiveDot on={ok} />
-                  Tor·{st.country}
-                </span>
-                <StatusBadge status={ok ? "ok" : "down"} />
-              </p>
-              <dl className="mt-3 space-y-1 font-mono text-xs text-muted">
-                <div className="flex justify-between gap-2">
-                  <dt>path</dt>
-                  <dd>/res-{id}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt>出口 IP</dt>
-                  <dd>{st.egress_ip || st.state}</dd>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <dt>订阅</dt>
-                  <dd>{ok ? "已发布" : "未发布"}</dd>
-                </div>
-              </dl>
-            </article>
-          );
-        })}
+        {Object.entries(slotMap)
+          .filter(([, st]) => st.state === "ready")
+          .map(([id, st]) => {
+            const ok = st.state === "ready";
+            const kind = st.kind === "openvpn" ? "OpenVPN" : "Tor";
+            return (
+              <article key={id} className="rounded-lg border border-border bg-surface p-4">
+                <p className="flex items-center justify-between gap-2 text-sm font-medium">
+                  <span className="flex items-center gap-2">
+                    <LiveDot on={ok} />
+                    {kind}·{st.country}
+                  </span>
+                  <StatusBadge status={ok ? "ok" : "down"} />
+                </p>
+                <dl className="mt-3 space-y-1 font-mono text-xs text-muted">
+                  <div className="flex justify-between gap-2">
+                    <dt>path</dt>
+                    <dd>/res-{id}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>出口 IP</dt>
+                    <dd>{st.egress_ip || st.state}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>类型</dt>
+                    <dd>{kind}</dd>
+                  </div>
+                </dl>
+              </article>
+            );
+          })}
       </div>
 
       <p className="text-xs font-medium tracking-widest text-subtle uppercase">订阅规则</p>

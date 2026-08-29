@@ -25,7 +25,7 @@
     },
     {
       "tag": "in-jp",
-      "listen": "/workspace/proxy-bin/socks/in-jp.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-jp.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -44,7 +44,7 @@
     },
     {
       "tag": "in-us",
-      "listen": "/workspace/proxy-bin/socks/in-us.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-us.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -63,7 +63,7 @@
     },
     {
       "tag": "in-de",
-      "listen": "/workspace/proxy-bin/socks/in-de.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-de.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -82,7 +82,7 @@
     },
     {
       "tag": "in-nl",
-      "listen": "/workspace/proxy-bin/socks/in-nl.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-nl.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -101,7 +101,7 @@
     },
     {
       "tag": "in-kr",
-      "listen": "/workspace/proxy-bin/socks/in-kr.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-kr.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -120,7 +120,7 @@
     },
     {
       "tag": "in-sg",
-      "listen": "/workspace/proxy-bin/socks/in-sg.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-sg.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -139,7 +139,7 @@
     },
     {
       "tag": "in-au",
-      "listen": "/workspace/proxy-bin/socks/in-au.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-au.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -158,7 +158,7 @@
     },
     {
       "tag": "in-ca",
-      "listen": "/workspace/proxy-bin/socks/in-ca.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ca.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -177,7 +177,7 @@
     },
     {
       "tag": "in-fr",
-      "listen": "/workspace/proxy-bin/socks/in-fr.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-fr.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -196,7 +196,7 @@
     },
     {
       "tag": "in-gb",
-      "listen": "/workspace/proxy-bin/socks/in-gb.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-gb.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -215,7 +215,7 @@
     },
     {
       "tag": "in-se",
-      "listen": "/workspace/proxy-bin/socks/in-se.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-se.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -234,7 +234,7 @@
     },
     {
       "tag": "in-ch",
-      "listen": "/workspace/proxy-bin/socks/in-ch.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ch.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -253,7 +253,7 @@
     },
     {
       "tag": "in-ovpn-jp",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-jp.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -272,7 +272,7 @@
     },
     {
       "tag": "in-ovpn-kr",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-kr.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -291,7 +291,7 @@
     },
     {
       "tag": "in-ovpn-ro",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-ro.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-ro.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -310,7 +310,7 @@
     },
     {
       "tag": "in-ovpn-jp2",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-jp2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -329,7 +329,7 @@
     },
     {
       "tag": "in-ovpn-jp3",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-jp3.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp3.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -348,7 +348,7 @@
     },
     {
       "tag": "in-ovpn-jp4",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-jp4.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp4.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -367,7 +367,7 @@
     },
     {
       "tag": "in-ovpn-jp5",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-jp5.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp5.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -386,7 +386,7 @@
     },
     {
       "tag": "in-ovpn-kr2",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-kr2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -405,7 +405,7 @@
     },
     {
       "tag": "in-ovpn-kr3",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-kr3.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr3.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -424,7 +424,7 @@
     },
     {
       "tag": "in-ovpn-kr4",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-kr4.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr4.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -443,7 +443,7 @@
     },
     {
       "tag": "in-us2",
-      "listen": "/workspace/proxy-bin/socks/in-us2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-us2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -462,7 +462,7 @@
     },
     {
       "tag": "in-de2",
-      "listen": "/workspace/proxy-bin/socks/in-de2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-de2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -481,7 +481,7 @@
     },
     {
       "tag": "in-ca2",
-      "listen": "/workspace/proxy-bin/socks/in-ca2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ca2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -500,7 +500,7 @@
     },
     {
       "tag": "in-fr2",
-      "listen": "/workspace/proxy-bin/socks/in-fr2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-fr2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -519,7 +519,7 @@
     },
     {
       "tag": "in-gb2",
-      "listen": "/workspace/proxy-bin/socks/in-gb2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-gb2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -538,7 +538,7 @@
     },
     {
       "tag": "in-ru",
-      "listen": "/workspace/proxy-bin/socks/in-ru.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ru.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -557,7 +557,7 @@
     },
     {
       "tag": "in-ru2",
-      "listen": "/workspace/proxy-bin/socks/in-ru2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ru2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -576,7 +576,7 @@
     },
     {
       "tag": "in-vn",
-      "listen": "/workspace/proxy-bin/socks/in-vn.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-vn.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -595,7 +595,7 @@
     },
     {
       "tag": "in-th",
-      "listen": "/workspace/proxy-bin/socks/in-th.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-th.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -614,7 +614,7 @@
     },
     {
       "tag": "in-it",
-      "listen": "/workspace/proxy-bin/socks/in-it.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-it.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -633,7 +633,7 @@
     },
     {
       "tag": "in-es",
-      "listen": "/workspace/proxy-bin/socks/in-es.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-es.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -652,7 +652,7 @@
     },
     {
       "tag": "in-pl",
-      "listen": "/workspace/proxy-bin/socks/in-pl.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-pl.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -671,7 +671,7 @@
     },
     {
       "tag": "in-ovpn-us",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-us.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-us.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -690,7 +690,7 @@
     },
     {
       "tag": "in-ovpn-th",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-th.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-th.sock",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -709,7 +709,7 @@
     },
     {
       "tag": "in-ovpn-th2",
-      "listen": "/workspace/proxy-bin/socks/in-ovpn-th2.sock",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-th2.sock",
       "protocol": "vless",
       "settings": {
         "clients": [

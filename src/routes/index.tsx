@@ -7,6 +7,10 @@ import { ExitsView } from "@/components/views/exits";
 import { LogsView } from "@/components/views/logs";
 import { Overview } from "@/components/views/overview";
 import { SettingsView } from "@/components/views/settings";
+import { TorView } from "@/components/views/tor";
+import { VpnView } from "@/components/views/vpn";
+import { SocksView } from "@/components/views/socks";
+import { RelaysView } from "@/components/views/relays";
 import { useAdminStore } from "@/lib/store";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -33,6 +37,10 @@ function Home() {
       <WatchdogEngine />
       <AppShell>
         {view === "overview" ? <Overview /> : null}
+        {view === "relays" ? <RelaysView /> : null}
+        {view === "tor" ? <TorView /> : null}
+        {view === "vpn" ? <VpnView /> : null}
+        {view === "socks" ? <SocksView /> : null}
         {view === "exits" ? <ExitsView /> : null}
         {view === "logs" ? <LogsView /> : null}
         {view === "settings" ? <SettingsView /> : null}

@@ -69,7 +69,9 @@ def spawn(cmd: list[str], log: Path, extra_env: dict | None = None) -> int:
 
 
 def nsenter(nspid: int, args: list[str], log: Path | None = None) -> subprocess.Popen:
-    cmd = ["nsenter", "-t", str(nspid), "-n", "--"] + args
+    # Host forbids CAP_SYS_ADMIN netns; slots run in user+net ns (mapped root).
+    # Plain `nsenter -n` / `nsenter -U -n` fails; --preserve-credentials -U -n works.
+    cmd = ["nsenter", "--preserve-credentials", "-t", str(nspid), "-U", "-n", "--"] + args
     if log is None:
         return subprocess.Popen(cmd, env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     return subprocess.Popen(cmd, env=ENV, stdout=log.open("ab"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -143,22 +145,25 @@ def make_netns(slot_dir: Path) -> int:
     pid = read_pid(slot_dir / "ns.pid")
     if pid_alive(pid):
         return pid
-    import ctypes
-
-    child = os.fork()
-    if child == 0:
-        libc = ctypes.CDLL("libc.so.6")
-        if libc.unshare(0x40000000) != 0:
-            os._exit(1)
-        os.setsid()
-        (slot_dir / "ns.pid").write_text(str(os.getpid()) + "\n")
-        signal.pause()
-        os._exit(0)
-    for _ in range(30):
+    # Unprivileged hosts block CLONE_NEWNET alone; user+net with root mapping works.
+    ns_log = slot_dir / "ns.log"
+    holder = [
+        "unshare",
+        "--user",
+        "--map-root-user",
+        "--net",
+        "bash",
+        "-c",
+        f'echo $$ > "{slot_dir / "ns.pid"}"; exec sleep infinity',
+    ]
+    spawn(holder, ns_log)
+    for _ in range(50):
         time.sleep(0.1)
         pid = read_pid(slot_dir / "ns.pid")
         if pid_alive(pid):
+            stamp(f"{slot_dir.name} user+net ns pid={pid}")
             return pid
+    stamp(f"{slot_dir.name} make_netns failed")
     return 0
 
 
@@ -166,12 +171,14 @@ def ensure_slirp(nspid: int, slot_dir: Path) -> None:
     pid = read_pid(slot_dir / "slirp.pid")
     if pid_alive(pid):
         return
-    p = spawn(
-        [str(NAT / "slirp4netns"), "--configure", "--mtu=65520", "--disable-host-loopback", str(nspid), "tap0"],
-        slot_dir / "slirp.log",
-    )
+    slirp = NAT / "slirp4netns"
+    # Prefer project binary (with LD_LIBRARY_PATH); fall back to system if present.
+    cmd = [str(slirp) if slirp.exists() else "slirp4netns", "--configure", "--mtu=65520", "--disable-host-loopback", str(nspid), "tap0"]
+    p = spawn(cmd, slot_dir / "slirp.log")
     (slot_dir / "slirp.pid").write_text(str(p) + "\n")
-    time.sleep(0.8)
+    time.sleep(1.2)
+    if not pid_alive(p):
+        stamp(f"{slot_dir.name} slirp died; see slirp.log")
 
 
 def kill_pidfile(path: Path) -> None:
@@ -342,6 +349,10 @@ def ready_ips() -> set[str]:
 def bring_up(slot: dict) -> dict:
     slot_dir = ROOT / slot["id"]
     slot_dir.mkdir(parents=True, exist_ok=True)
+    if (slot_dir / "DISABLED").exists():
+        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
+            kill_pidfile(slot_dir / name)
+        return {**slot, "state": "down", "egress_ip": "", "kind": "openvpn", "disabled": True}
     if slot["id"] == "ovpn-jp":
         adopt_legacy_jp()
     ip = probe(slot["port"])

@@ -16,6 +16,8 @@ proxy-bin/*.dat
 proxy-bin/cf-tunnel-token
 proxy-bin/cf-hostname
 proxy-bin/cf-metrics.sock
+proxy-bin/admin-token
+proxy-bin/relays.json
 proxy-bin/*.log
 proxy-bin/*.pid
 proxy-bin/tor/

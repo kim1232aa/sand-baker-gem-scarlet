@@ -13,8 +13,90 @@ export type LiveExit = {
   state?: string;
   egress_ip?: string;
   socks?: number;
+  /** OpenVPN local SOCKS port (normalized into socks by API). */
+  port?: number;
+  vpn_port?: string | number;
+  pid?: number;
   kind?: string;
 };
+
+export function socksPort(slot: LiveExit): number {
+  const n = Number(slot.socks ?? slot.port ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function readySocksSlots(exits: LiveExit[]): LiveExit[] {
+  return exits.filter((s) => s.state === "ready" && socksPort(s) > 0);
+}
+
+export function buildSocksTxt(exits: LiveExit[]): string {
+  return readySocksSlots(exits)
+    .map((s) => {
+      const port = socksPort(s);
+      const kind = s.kind === "openvpn" ? "OpenVPN" : "Tor";
+      const ip = s.egress_ip || "unknown";
+      return `socks5://127.0.0.1:${port}#${kind}-${s.country}-${ip}`;
+    })
+    .join("\n") + (readySocksSlots(exits).length ? "\n" : "");
+}
+
+export function buildSocksClashYaml(exits: LiveExit[]): string {
+  const ready = readySocksSlots(exits);
+  const proxies = ready.map((s) => {
+    const port = socksPort(s);
+    const kind = s.kind === "openvpn" ? "OpenVPN" : "Tor";
+    const name = `${kind}·${s.country} ${s.egress_ip || s.id}`;
+    return [
+      `  - name: ${JSON.stringify(name)}`,
+      `    type: socks5`,
+      `    server: 127.0.0.1`,
+      `    port: ${port}`,
+      `    udp: true`,
+    ].join("\n");
+  });
+  const names = ready.map((s) => {
+    const kind = s.kind === "openvpn" ? "OpenVPN" : "Tor";
+    return JSON.stringify(`${kind}·${s.country} ${s.egress_ip || s.id}`);
+  });
+  const tor = ready.filter((s) => s.kind !== "openvpn");
+  const ovpn = ready.filter((s) => s.kind === "openvpn");
+  const groups = [
+    `  - name: SOCKS出口`,
+    `    type: select`,
+    `    proxies: [${names.join(", ") || '"DIRECT"'}]`,
+  ];
+  if (tor.length) {
+    groups.push(
+      `  - name: SOCKS·Tor`,
+      `    type: select`,
+      `    proxies: [${tor
+        .map((s) => JSON.stringify(`Tor·${s.country} ${s.egress_ip || s.id}`))
+        .join(", ")}]`,
+    );
+  }
+  if (ovpn.length) {
+    groups.push(
+      `  - name: SOCKS·OpenVPN`,
+      `    type: select`,
+      `    proxies: [${ovpn
+        .map((s) => JSON.stringify(`OpenVPN·${s.country} ${s.egress_ip || s.id}`))
+        .join(", ")}]`,
+    );
+  }
+  return [
+    `mixed-port: 7890`,
+    `allow-lan: false`,
+    `mode: rule`,
+    `log-level: info`,
+    `proxies:`,
+    ...(proxies.length ? proxies : [`  - name: "DIRECT-PLACEHOLDER"`, `    type: direct`]),
+    `proxy-groups:`,
+    ...groups,
+    `rules:`,
+    `  - MATCH,SOCKS出口`,
+    ``,
+  ].join("\n");
+}
 
 export const CF_FRONTS: { server: string; name: string }[] = [
   { server: "cf.090227.xyz", name: "CF优选·090227" },
