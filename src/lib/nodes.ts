@@ -23,6 +23,22 @@ export type LiveExit = {
   /** Remaining VPNGate TCP candidates after skips. */
   candidates?: number;
   disabled?: boolean;
+  /** kui-aligned redial metadata */
+  generation?: number;
+  failures?: number;
+  country_fallback?: boolean;
+  fallback_country?: string;
+  target_country?: string;
+};
+
+export type OvpnCandidate = {
+  ip: string;
+  country?: string;
+  ping?: number;
+  score?: number;
+  port?: string;
+  proto?: string;
+  remote?: string;
 };
 
 export function socksPort(slot: LiveExit): number {

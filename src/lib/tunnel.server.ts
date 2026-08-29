@@ -226,11 +226,18 @@ export function controlSlot(kind: SlotKind, id: string, slotAction: "restart" | 
   } catch {
     /* ignore */
   }
+  // Clear auto-failure streak on manual redial / enable.
+  try {
+    unlinkSync(join(dir, "FAILURES"));
+  } catch {
+    /* ignore */
+  }
   if (kind === "tor") {
     killPidFile(join(dir, "tor.pid"));
   } else {
     // Remember current remote so pick_profile won't reselect the same node,
     // then force a full datapath tear-down (SOCKS may still answer otherwise).
+    // ovpn_slots also penalizes entry IP on FORCE_REDIAL (kui redial_slot).
     const cfg = join(dir, "client.ovpn");
     try {
       if (existsSync(cfg)) {
@@ -254,6 +261,8 @@ export function controlSlot(kind: SlotKind, id: string, slotAction: "restart" | 
             }
             prev.push(remote);
             writeFileSync(skipFile, prev.slice(-12).join("\n") + "\n");
+            // Let ovpn_slots NodePool.penalize on FORCE_REDIAL even after cfg is removed.
+            writeFileSync(join(dir, "REDIAL_ENTRY"), `${remote.split(":")[0] || remote}\n`);
           }
         }
         unlinkSync(cfg);
@@ -268,6 +277,73 @@ export function controlSlot(kind: SlotKind, id: string, slotAction: "restart" | 
     killPidFile(join(dir, "ns-socks.pid"));
   }
   return { ok: true, kind, id, slotAction };
+}
+
+/** Manual connect: write preferred node IP (kui connect_slot). */
+export function connectOvpnSlot(id: string, nodeIp: string) {
+  const ip = String(nodeIp || "").trim();
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) {
+    return { ok: false, error: "invalid node_ip", id };
+  }
+  const dir = slotDir("openvpn", id);
+  mkdirSync(dir, { recursive: true });
+  try {
+    unlinkSync(join(dir, "DISABLED"));
+  } catch {
+    /* ignore */
+  }
+  try {
+    unlinkSync(join(dir, "FAILURES"));
+  } catch {
+    /* ignore */
+  }
+  writeFileSync(join(dir, "CONNECT"), `${ip}\n`);
+  // Drop current tunnel so manager picks CONNECT on next loop.
+  try {
+    unlinkSync(join(dir, "client.ovpn"));
+  } catch {
+    /* ignore */
+  }
+  killPidFile(join(dir, "openvpn.pid"));
+  killPidFile(join(dir, "openvpn-host.pid"));
+  killPidFile(join(dir, "fwd.pid"));
+  killPidFile(join(dir, "ns-socks.pid"));
+  return { ok: true, id, nodeIp: ip, slotAction: "connect" as const };
+}
+
+/** Batch redial slots that are enabled but not ready (kui offline batch). */
+export function batchRedialOfflineOvpn() {
+  const slots = liveExitSlots().filter((s) => s.kind === "openvpn");
+  const targets = slots.filter((s) => !s.disabled && s.state !== "ready");
+  const results = targets.map((s) => controlSlot("openvpn", s.id, "restart"));
+  return { ok: true, count: results.length, ids: targets.map((s) => s.id), results };
+}
+
+export function listOvpnNodes(country = "ANY") {
+  const file = join(BIN, "ovpn-nodes.json");
+  let updated = 0;
+  let counts: Record<string, number> = {};
+  let nodes: Array<Record<string, unknown>> = [];
+  try {
+    if (existsSync(file)) {
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+        updated?: number;
+        counts?: Record<string, number>;
+        nodes?: Array<Record<string, unknown>>;
+      };
+      updated = Number(parsed.updated || 0);
+      counts = parsed.counts || {};
+      nodes = parsed.nodes || [];
+    }
+  } catch {
+    /* ignore */
+  }
+  const cc = (country || "ANY").toUpperCase();
+  const filtered =
+    cc === "ANY" || cc === "ALL" || cc === ""
+      ? nodes
+      : nodes.filter((n) => String(n.country || "").toUpperCase() === cc);
+  return { updated, counts, country: cc, nodes: filtered };
 }
 
 export async function probeSlot(kind: SlotKind, id: string) {
@@ -389,6 +465,7 @@ export function stackStatus() {
   const torSlots = slots.filter((s) => s.kind !== "openvpn");
   const ovpnSlots = slots.filter((s) => s.kind === "openvpn");
   const h = host || "relay.local";
+  const ovpnNodes = listOvpnNodes("ANY");
   return {
     host,
     token: hasTunnelToken(),
@@ -401,6 +478,8 @@ export function stackStatus() {
     slots,
     torSlots,
     ovpnSlots,
+    ovpnNodeCounts: ovpnNodes.counts,
+    ovpnNodesUpdated: ovpnNodes.updated,
     counts: counts(h, slots),
     socks: {
       localPlainUrl: `${SUB_PATH}/socks.txt`,

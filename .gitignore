@@ -25,6 +25,7 @@ proxy-bin/native/
 proxy-bin/socks/
 proxy-bin/slots.json
 proxy-bin/ovpn.json
+proxy-bin/ovpn-nodes.json
 proxy-bin/ovpn/
 proxy-bin/heartbeat.json
 

@@ -50,21 +50,117 @@ PLAN = [
     {"id": "ovpn-ro", "country": "RO", "port": 9173, "vpn_port": ""},
 ]
 
-_NODES: list[dict] = []
 _NODES_AT = 0.0
 _SKIP: set[str] = set()
+_POOL = None  # kui.vpngate.NodePool
+MAX_FAILURES = 3
+COUNTRY_FALLBACK_AFTER = 2
+PENALIZE_REDIAL = 3000
+PENALIZE_FAIL = 10000
+PENALIZE_TIMEOUT = 5000
 
 
 def stamp(msg: str) -> None:
     LOG.open("a").write(time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + msg + "\n")
 
 
+def node_pool():
+    global _POOL
+    if _POOL is None:
+        from kui.vpngate import NodePool
+
+        _POOL = NodePool()
+    return _POOL
+
+
+NODES_STATUS = BIN / "ovpn-nodes.json"
+
+
+def dump_nodes_snapshot() -> None:
+    """Persist candidate list (sans config) for the admin API / UI."""
+    try:
+        rows = []
+        for row in node_pool().list_nodes("ANY"):
+            ip = str(row.get("ip") or "")
+            full = node_pool().get(ip, "ANY") if ip else None
+            proto = port = ""
+            if full:
+                proto, port = parse_proto_port(full.get("config") or "")
+            rows.append(
+                {
+                    "ip": ip,
+                    "country": row.get("country"),
+                    "ping": row.get("ping"),
+                    "score": row.get("score"),
+                    "port": port,
+                    "proto": proto,
+                    "remote": f"{ip}:{port}" if ip and port else ip,
+                }
+            )
+        NODES_STATUS.write_text(
+            json.dumps(
+                {
+                    "updated": int(time.time()),
+                    "counts": node_pool().counts(),
+                    "nodes": rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n"
+        )
+    except OSError as e:
+        stamp(f"dump nodes failed: {e}")
+
+
 def refresh_nodes(force: bool = False) -> list[dict]:
-    global _NODES, _NODES_AT
-    if force:
-        _NODES = []
-        _NODES_AT = 0.0
-    return vpngate_nodes()
+    global _NODES_AT
+    if not force and _NODES_AT and time.time() - _NODES_AT < 300 and node_pool().counts():
+        return list(node_pool()._nodes.values())  # noqa: SLF001 — mirror kui snapshot access
+    from kui.vpngate import fetch_nodes
+
+    nodes = fetch_nodes(timeout=25)
+    # Keep TCP-capable profiles only for this userns OpenVPN path.
+    tcp_nodes = []
+    for n in nodes:
+        proto, _port = parse_proto_port(n.get("config") or "")
+        if proto.startswith("tcp"):
+            tcp_nodes.append(n)
+    node_pool().replace(tcp_nodes)
+    _NODES_AT = time.time()
+    stamp(f"node pool refresh n={len(tcp_nodes)} countries={node_pool().counts()}")
+    dump_nodes_snapshot()
+    return tcp_nodes
+
+
+def read_int(path: Path, default: int = 0) -> int:
+    try:
+        return int(path.read_text().strip() or default)
+    except Exception:
+        return default
+
+
+def write_int(path: Path, value: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(int(value)) + "\n")
+
+
+def bump_generation(slot_dir: Path) -> int:
+    gen = read_int(slot_dir / "GENERATION", 0) + 1
+    write_int(slot_dir / "GENERATION", gen)
+    return gen
+
+
+def generation_of(slot_dir: Path) -> int:
+    return read_int(slot_dir / "GENERATION", 0)
+
+
+def failures_of(slot_dir: Path) -> int:
+    return read_int(slot_dir / "FAILURES", 0)
+
+
+def set_failures(slot_dir: Path, n: int) -> None:
+    write_int(slot_dir / "FAILURES", max(0, n))
 
 
 def load_slot_skips(slot_dir: Path) -> set[str]:
@@ -83,6 +179,7 @@ def load_slot_skips(slot_dir: Path) -> set[str]:
 
 
 def remember_skip(slot_dir: Path, remote: str, keep: int = 12) -> None:
+    """Record remote so this slot won't reselect it soon. Callers penalize NodePool separately."""
     if not remote:
         return
     _SKIP.add(remote)
@@ -102,23 +199,65 @@ def parse_proto_port(cfg: str) -> tuple[str, str]:
     return proto, port
 
 
-def list_candidates(country: str, want_port: str = "", excluded: set[str] | None = None) -> list[dict]:
-    excluded = excluded or set()
-    cands: list[dict] = []
-    for n in vpngate_nodes():
-        if n.get("country") != country:
+def active_entry_ips(excluding: str = "") -> set[str]:
+    used: set[str] = set()
+    if not ROOT.exists():
+        return used
+    for d in ROOT.iterdir():
+        if not d.is_dir() or d.name == excluding:
             continue
-        proto, port = parse_proto_port(n["config"])
+        cfg = d / "client.ovpn"
+        if not cfg.exists():
+            continue
+        remote = remote_of(cfg.read_text(errors="replace"))
+        if remote:
+            used.add(remote.split(":", 1)[0])
+    return used
+
+
+def list_candidates(
+    country: str,
+    want_port: str = "",
+    excluded: set[str] | None = None,
+    *,
+    limit: int = 40,
+) -> list[dict]:
+    refresh_nodes()
+    excluded = set(excluded or set())
+    # excluded may contain ip or ip:port — normalize to ips + remotes
+    excluded_ips = {e.split(":", 1)[0] for e in excluded}
+    rows = node_pool().list_nodes(country if country != "ANY" else "ANY")
+    out: list[dict] = []
+    for row in rows:
+        ip = str(row.get("ip") or "")
+        if not ip or ip in excluded_ips:
+            continue
+        full = node_pool().get(ip, country if country not in {"", "ANY"} else "ANY") or node_pool().get(ip, "ANY")
+        if not full:
+            continue
+        proto, port = parse_proto_port(full.get("config") or "")
         if not proto.startswith("tcp"):
             continue
         if want_port and port != want_port:
             continue
-        key = f"{n['ip']}:{port}"
+        key = f"{ip}:{port}"
         if key in excluded:
             continue
-        cands.append({**n, "_remote": key, "_port": port, "_proto": proto})
-    cands.sort(key=lambda n: int(n.get("ping") or 9999))
-    return cands
+        out.append(
+            {
+                "ip": ip,
+                "country": full.get("country"),
+                "ping": full.get("ping"),
+                "score": full.get("score"),
+                "port": port,
+                "proto": proto,
+                "remote": key,
+                "config": full.get("config"),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def pid_alive(pid: int) -> bool:
@@ -174,17 +313,6 @@ def remote_of(cfg: str) -> str:
     return ""
 
 
-def vpngate_nodes() -> list[dict]:
-    global _NODES, _NODES_AT
-    if _NODES and time.time() - _NODES_AT < 300:
-        return _NODES
-    from kui.vpngate import fetch_nodes
-
-    _NODES = fetch_nodes(timeout=25)
-    _NODES_AT = time.time()
-    return _NODES
-
-
 def used_remotes() -> set[str]:
     used = set(_SKIP)
     for d in ROOT.iterdir() if ROOT.exists() else []:
@@ -194,30 +322,156 @@ def used_remotes() -> set[str]:
     return used
 
 
-def pick_profile(slot: dict, slot_dir: Path | None = None) -> str:
-    want = str(slot.get("vpn_port") or "").strip()
+def take_preferred_ip(slot_dir: Path) -> str:
+    p = slot_dir / "CONNECT"
+    if not p.exists():
+        return ""
+    try:
+        ip = p.read_text(errors="replace").strip().split()[0]
+    except Exception:
+        ip = ""
+    try:
+        p.unlink()
+    except OSError:
+        pass
+    return ip
+
+
+def country_fallback_allowed(slot_dir: Path, country: str) -> bool:
+    return country not in {"", "ANY"} and failures_of(slot_dir) >= COUNTRY_FALLBACK_AFTER
+
+
+def select_node(
+    slot: dict,
+    slot_dir: Path,
+    *,
+    preferred_ip: str = "",
+    allow_fallback: bool | None = None,
+) -> dict:
+    """Pick a VPNGate TCP node via NodePool (kui-local-multi-exit aligned)."""
+    refresh_nodes()
     country = slot["country"]
-    slot_dir = slot_dir or (ROOT / slot["id"])
-    excluded = used_remotes() | load_slot_skips(slot_dir)
-    # Prefer configured port; if empty pool, fall back to any TCP for that country.
-    cands = list_candidates(country, want, excluded)
-    if not cands and want:
-        stamp(f"{slot['id']} no tcp/{want} left for {country}, fallback any tcp")
-        cands = list_candidates(country, "", excluded)
-    if not cands:
-        # Last resort: refresh list and retry once without soft process skips.
+    want = str(slot.get("vpn_port") or "").strip()
+    if allow_fallback is None:
+        allow_fallback = country_fallback_allowed(slot_dir, country)
+
+    # Exclude other slots' entry IPs + this slot's recent SKIP remotes.
+    excluded_ips = active_entry_ips(excluding=slot["id"]) | {r.split(":", 1)[0] for r in load_slot_skips(slot_dir)}
+    excluded_ips |= {r.split(":", 1)[0] for r in used_remotes() if ":" in r or r}
+    # Soft process-level skips
+    excluded_ips |= {r.split(":", 1)[0] for r in _SKIP}
+
+    def _tcp_ok(node: dict | None) -> dict | None:
+        if not node:
+            return None
+        proto, _port = parse_proto_port(node.get("config") or "")
+        return node if proto.startswith("tcp") else None
+
+    def _match_port(node: dict | None) -> dict | None:
+        node = _tcp_ok(node)
+        if not node:
+            return None
+        if not want:
+            return node
+        _proto, port = parse_proto_port(node.get("config") or "")
+        return node if port == want else None
+
+    def _select(cc: str, *, require_want: bool) -> dict | None:
+        # Walk NodePool order (already ping+penalty sorted) instead of refetching.
+        for row in node_pool().list_nodes(cc if cc != "ANY" else "ANY"):
+            ip = str(row.get("ip") or "")
+            if not ip or ip in excluded_ips:
+                continue
+            full = node_pool().get(ip, cc if cc != "ANY" else "ANY") or node_pool().get(ip, "ANY")
+            if require_want:
+                full = _match_port(full)
+            else:
+                full = _tcp_ok(full)
+            if full:
+                return full
+        return None
+
+    node = None
+    fallback = False
+    if preferred_ip:
+        node = _match_port(node_pool().get(preferred_ip, country)) or _match_port(
+            node_pool().get(preferred_ip, "ANY")
+        )
+        if node is None:
+            # Preferred IP may be wrong country / wrong port — still honour exact IP if TCP.
+            node = _tcp_ok(node_pool().get(preferred_ip, "ANY"))
+        if node and node["ip"] in excluded_ips:
+            node = None
+        if node is None:
+            stamp(f"{slot['id']} preferred {preferred_ip} unavailable, auto select")
+
+    if node is None:
+        node = _select(country, require_want=bool(want))
+        if node is None and want:
+            stamp(f"{slot['id']} no tcp/{want} for {country}, fallback any tcp")
+            node = _select(country, require_want=False)
+        # kui: empty target pool always may cross-country; else after failure streak.
+        if node is None and country != "ANY":
+            # Prefer other countries first (kui excludes target country).
+            # Cross-country only when streak allows OR target country truly empty.
+            target_empty = _select(country, require_want=False) is None
+            if allow_fallback or target_empty:
+                alt = None
+                for row in node_pool().list_nodes("ANY"):
+                    ip = str(row.get("ip") or "")
+                    if not ip or ip in excluded_ips or row.get("country") == country:
+                        continue
+                    full = _tcp_ok(node_pool().get(ip, "ANY"))
+                    if full:
+                        alt = full
+                        break
+                if alt:
+                    node = alt
+                    fallback = True
+                    stamp(
+                        f"{slot['id']} country_fallback "
+                        f"{'empty-pool' if target_empty else 'after-failures'} -> {alt.get('country')}"
+                    )
+
+    if node is None:
+        # Force refresh once then retry without soft skips / without slot skip history.
         refresh_nodes(force=True)
-        excluded = used_remotes() | load_slot_skips(slot_dir)
-        cands = list_candidates(country, want, excluded) or list_candidates(country, "", excluded)
-    if not cands:
-        # Absolute last: ignore SKIP_REMOTES history (still avoid other slots' remotes).
-        excluded = used_remotes()
-        cands = list_candidates(country, "", excluded)
-    if not cands:
-        raise RuntimeError(f"no tcp VPNGate for {country} (want={want or 'any'})")
-    chosen = cands[0]
-    stamp(f"{slot['id']} pick {chosen.get('_remote')} ping={chosen.get('ping')} pool={len(cands)}")
-    return chosen["config"]
+        excluded_ips = active_entry_ips(excluding=slot["id"])
+        node = node_pool().select(country, excluded_ips)
+        node = _tcp_ok(node)
+        if node is None and country != "ANY":
+            node = _tcp_ok(node_pool().select("ANY", excluded_ips))
+            if node and node.get("country") != country:
+                fallback = True
+
+    if not node:
+        raise RuntimeError(f"no tcp VPNGate for {country} (want={want or 'any'}); distribution={node_pool().counts()}")
+
+    proto, port = parse_proto_port(node.get("config") or "")
+    remote = f"{node['ip']}:{port}" if port else node["ip"]
+    meta = {
+        "ip": node["ip"],
+        "country": node.get("country"),
+        "ping": node.get("ping"),
+        "score": node.get("score"),
+        "port": port,
+        "proto": proto,
+        "remote": remote,
+        "config": node["config"],
+        "country_fallback": bool(fallback),
+        "target_country": country if fallback else "",
+    }
+    stamp(
+        f"{slot['id']} pick {remote} ping={meta.get('ping')} "
+        f"cc={meta.get('country')} fallback={int(fallback)} failures={failures_of(slot_dir)}"
+    )
+    return meta
+
+
+def pick_profile(slot: dict, slot_dir: Path | None = None) -> str:
+    slot_dir = slot_dir or (ROOT / slot["id"])
+    preferred = take_preferred_ip(slot_dir)
+    return select_node(slot, slot_dir, preferred_ip=preferred)["config"]
 
 
 def make_netns(slot_dir: Path) -> int:
@@ -269,19 +523,36 @@ def kill_pidfile(path: Path) -> None:
             pass
 
 
-def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path) -> None:
+def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path, *, start_gen: int | None = None) -> dict:
+    """Dial OpenVPN inside the netns. Returns meta about last attempt."""
     pid = read_pid(slot_dir / "openvpn.pid")
     log = slot_dir / "openvpn.log"
     if pid_alive(pid) and log.exists() and "Initialization Sequence Completed" in log.read_text(errors="replace"):
-        return
+        cfg = slot_dir / "client.ovpn"
+        remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+        return {"ok": True, "remote": remote, "reused": True}
+    last_meta: dict = {"ok": False, "remote": "", "reused": False}
+    preferred = take_preferred_ip(slot_dir)
     for _try in range(5):
+        if start_gen is not None and generation_of(slot_dir) != start_gen:
+            stamp(f"{slot['id']} generation changed during dial, abort")
+            last_meta["stale"] = True
+            return last_meta
         cfg = slot_dir / "client.ovpn"
         try:
-            cfg.write_text(pick_profile(slot, slot_dir))
+            # Only consume preferred IP on the first attempt of this dial cycle.
+            meta = select_node(
+                slot,
+                slot_dir,
+                preferred_ip=preferred if _try == 0 else "",
+            )
+            cfg.write_text(meta["config"])
         except RuntimeError as e:
             stamp(f"{slot['id']} {e}")
-            return
-        remote = remote_of(cfg.read_text())
+            last_meta["error"] = str(e)
+            return last_meta
+        remote = meta.get("remote") or remote_of(cfg.read_text())
+        last_meta = {**meta, "ok": False, "reused": False}
         auth = slot_dir / "auth.txt"
         auth.write_text("vpn\nvpn\n")
         auth.chmod(0o600)
@@ -320,27 +591,63 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path) -> None:
         )
         (slot_dir / "openvpn-host.pid").write_text(str(proc.pid) + "\n")
         ok = False
+        timed_out = True
         for _ in range(22):
+            if start_gen is not None and generation_of(slot_dir) != start_gen:
+                stamp(f"{slot['id']} generation changed mid-wait, abort")
+                kill_pidfile(slot_dir / "openvpn.pid")
+                kill_pidfile(slot_dir / "openvpn-host.pid")
+                last_meta["stale"] = True
+                return last_meta
             time.sleep(1)
             text = log.read_text(errors="replace") if log.exists() else ""
             if "Initialization Sequence Completed" in text:
                 stamp(f"{slot['id']} openvpn ready {remote}")
                 ok = True
+                timed_out = False
                 break
             if "AUTH_FAILED" in text or "Exiting due" in text:
                 stamp(f"{slot['id']} openvpn fail {remote}")
+                timed_out = False
                 break
         if ok:
-            return
-        # Timeout or auth fail: remember remote and try next candidate.
+            set_failures(slot_dir, 0)
+            last_meta["ok"] = True
+            # Persist fallback markers for status UI.
+            if meta.get("country_fallback"):
+                (slot_dir / "COUNTRY_FALLBACK").write_text(
+                    f"{meta.get('country')}|{meta.get('target_country')}\n"
+                )
+            else:
+                try:
+                    (slot_dir / "COUNTRY_FALLBACK").unlink()
+                except OSError:
+                    pass
+            return last_meta
+        # Timeout or auth fail: penalize + remember remote and try next candidate.
+        amount = PENALIZE_TIMEOUT if timed_out else PENALIZE_FAIL
+        ip = str(meta.get("ip") or remote.split(":", 1)[0])
+        if ip:
+            node_pool().penalize(ip, amount)
         remember_skip(slot_dir, remote)
-        stamp(f"{slot['id']} openvpn try={_try + 1}/5 skip {remote}")
+        stamp(f"{slot['id']} openvpn try={_try + 1}/5 skip {remote} penalize={amount}")
         try:
             cfg.unlink()
         except OSError:
             pass
         kill_pidfile(slot_dir / "openvpn.pid")
         kill_pidfile(slot_dir / "openvpn-host.pid")
+    # Exhausted retries in this dial cycle → bump consecutive failure streak.
+    fails = failures_of(slot_dir) + 1
+    set_failures(slot_dir, fails)
+    last_meta["failures"] = fails
+    if fails >= MAX_FAILURES:
+        (slot_dir / "DISABLED").write_text(
+            f"auto-disabled after {fails} consecutive dial failures\n"
+        )
+        stamp(f"{slot['id']} DISABLED after {fails} failures")
+        last_meta["disabled"] = True
+    return last_meta
 
 
 def ensure_socks(nspid: int, slot: dict, slot_dir: Path) -> None:
@@ -425,11 +732,35 @@ def ready_ips() -> set[str]:
 
 def candidate_count(slot: dict, slot_dir: Path) -> int:
     want = str(slot.get("vpn_port") or "").strip()
-    excluded = used_remotes() | load_slot_skips(slot_dir)
+    excluded = active_entry_ips(excluding=slot["id"]) | {r.split(":", 1)[0] for r in load_slot_skips(slot_dir)}
     n = len(list_candidates(slot["country"], want, excluded))
     if n == 0 and want:
         n = len(list_candidates(slot["country"], "", excluded))
+    if n == 0 and country_fallback_allowed(slot_dir, slot["country"]):
+        n = len(list_candidates("ANY", "", excluded))
     return n
+
+
+def slot_status_extra(slot: dict, slot_dir: Path, remote: str = "") -> dict:
+    fallback = ""
+    target = ""
+    fb = slot_dir / "COUNTRY_FALLBACK"
+    if fb.exists():
+        try:
+            parts = fb.read_text(errors="replace").strip().split("|", 1)
+            fallback = parts[0]
+            target = parts[1] if len(parts) > 1 else slot["country"]
+        except OSError:
+            pass
+    return {
+        "remote": remote,
+        "candidates": candidate_count(slot, slot_dir),
+        "generation": generation_of(slot_dir),
+        "failures": failures_of(slot_dir),
+        "country_fallback": bool(fallback),
+        "fallback_country": fallback or "",
+        "target_country": target or "",
+    }
 
 
 def bring_up(slot: dict) -> dict:
@@ -444,8 +775,7 @@ def bring_up(slot: dict) -> dict:
             "egress_ip": "",
             "kind": "openvpn",
             "disabled": True,
-            "remote": "",
-            "candidates": candidate_count(slot, slot_dir),
+            **slot_status_extra(slot, slot_dir),
         }
     force = (slot_dir / "FORCE_REDIAL").exists()
     if force:
@@ -453,13 +783,53 @@ def bring_up(slot: dict) -> dict:
             (slot_dir / "FORCE_REDIAL").unlink()
         except OSError:
             pass
-        refresh_nodes(force=True)
+        # kui redial_slot: penalize current entry IP then stop/start.
+        entry_ip = ""
+        remote = ""
+        cfg = slot_dir / "client.ovpn"
+        if cfg.exists():
+            remote = remote_of(cfg.read_text(errors="replace"))
+            entry_ip = remote.split(":", 1)[0] if remote else ""
+            try:
+                cfg.unlink()
+            except OSError:
+                pass
+        mark = slot_dir / "REDIAL_ENTRY"
+        if mark.exists():
+            try:
+                entry_ip = entry_ip or mark.read_text(errors="replace").strip().split()[0]
+            except OSError:
+                pass
+            try:
+                mark.unlink()
+            except OSError:
+                pass
+        if entry_ip:
+            node_pool().penalize(entry_ip, PENALIZE_REDIAL)
+            if remote:
+                remember_skip(slot_dir, remote)
+            elif ":" not in entry_ip:
+                remember_skip(slot_dir, entry_ip)
+        bump_generation(slot_dir)
+        # Soft refresh only — batch redial must not refetch VPNGate per slot.
+        try:
+            refresh_nodes(force=False)
+        except Exception as e:
+            stamp(f"{slot['id']} node refresh on redial: {e}")
         # Tear down datapath so probe cannot short-circuit on stale SOCKS.
         for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
             kill_pidfile(slot_dir / name)
-        stamp(f"{slot['id']} force redial")
+        stamp(f"{slot['id']} force redial gen={generation_of(slot_dir)} penalize={entry_ip or '-'}")
+    # Manual connect preferred IP keeps generation bump if CONNECT present without FORCE.
+    if (slot_dir / "CONNECT").exists() and not force:
+        bump_generation(slot_dir)
+        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
+            kill_pidfile(slot_dir / name)
+        stamp(f"{slot['id']} manual connect pending")
+        force = True
     if slot["id"] == "ovpn-jp":
         adopt_legacy_jp()
+    start_gen = generation_of(slot_dir)
     ip = "" if force else probe(slot["port"])
     if ip:
         cfg = slot_dir / "client.ovpn"
@@ -469,8 +839,7 @@ def bring_up(slot: dict) -> dict:
             "state": "ready",
             "egress_ip": ip,
             "kind": "openvpn",
-            "remote": remote,
-            "candidates": candidate_count(slot, slot_dir),
+            **slot_status_extra(slot, slot_dir, remote),
         }
     nspid = make_netns(slot_dir)
     if not nspid:
@@ -479,19 +848,38 @@ def bring_up(slot: dict) -> dict:
             "state": "down",
             "egress_ip": "",
             "kind": "openvpn",
-            "remote": "",
-            "candidates": candidate_count(slot, slot_dir),
+            **slot_status_extra(slot, slot_dir),
         }
     ensure_slirp(nspid, slot_dir)
-    ensure_openvpn(nspid, slot, slot_dir)
+    dial = ensure_openvpn(nspid, slot, slot_dir, start_gen=start_gen)
+    if dial.get("disabled"):
+        return {
+            **slot,
+            "state": "down",
+            "egress_ip": "",
+            "kind": "openvpn",
+            "disabled": True,
+            **slot_status_extra(slot, slot_dir, dial.get("remote") or ""),
+        }
+    if dial.get("stale"):
+        return {
+            **slot,
+            "state": "boot",
+            "egress_ip": "",
+            "kind": "openvpn",
+            **slot_status_extra(slot, slot_dir),
+        }
     ensure_socks(nspid, slot, slot_dir)
     time.sleep(0.5)
     ip = probe(slot["port"])
     cfg = slot_dir / "client.ovpn"
-    remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+    remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else dial.get("remote") or ""
     if ip and ip in ready_ips():
         stamp(f"{slot['id']} duplicate egress {ip}, skip publish")
         remember_skip(slot_dir, remote)
+        entry = remote.split(":", 1)[0] if remote else ""
+        if entry:
+            node_pool().penalize(entry, PENALIZE_FAIL)
         try:
             cfg.unlink()
         except OSError:
@@ -503,16 +891,16 @@ def bring_up(slot: dict) -> dict:
             "state": "boot",
             "egress_ip": "",
             "kind": "openvpn",
-            "remote": "",
-            "candidates": candidate_count(slot, slot_dir),
+            **slot_status_extra(slot, slot_dir),
         }
+    if ip:
+        set_failures(slot_dir, 0)
     return {
         **slot,
         "state": "ready" if ip else "boot",
         "egress_ip": ip,
         "kind": "openvpn",
-        "remote": remote,
-        "candidates": candidate_count(slot, slot_dir),
+        **slot_status_extra(slot, slot_dir, remote),
     }
 
 
@@ -521,6 +909,10 @@ def loop() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     (BIN / "socks").mkdir(exist_ok=True)
     stamp("ovpn slots start")
+    try:
+        refresh_nodes(force=True)
+    except Exception as e:
+        stamp(f"initial node refresh failed: {e}")
     kr_cfg = ROOT / "ovpn-kr" / "client.ovpn"
     if kr_cfg.exists() and ":443" in remote_of(kr_cfg.read_text(errors="replace")):
         kr_cfg.unlink()

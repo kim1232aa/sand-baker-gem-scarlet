@@ -1,8 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   assertAdminAuth,
+  batchRedialOfflineOvpn,
+  connectOvpnSlot,
   controlProcess,
   controlSlot,
+  listOvpnNodes,
   probeSlot,
   restartStack,
   stackStatus,
@@ -19,6 +22,11 @@ export const Route = createFileRoute("/api/stack")({
       GET: ({ request }) => {
         const denied = assertAdminAuth(request);
         if (denied) return denied;
+        const url = new URL(request.url);
+        if (url.searchParams.get("nodes") === "1" || url.searchParams.get("ovpnNodes") === "1") {
+          const country = url.searchParams.get("country") || "ANY";
+          return Response.json({ ok: true, ...listOvpnNodes(country), ...stackStatus() });
+        }
         return Response.json(stackStatus());
       },
       POST: async ({ request }) => {
@@ -31,10 +39,14 @@ export const Route = createFileRoute("/api/stack")({
           setAdminToken?: string;
           action?: "start" | "stop" | "restart";
           target?: ProcName;
-          slotAction?: "restart" | "stop";
+          slotAction?: "restart" | "stop" | "connect";
           slotId?: string;
           slotKind?: SlotKind;
           probe?: boolean;
+          nodeIp?: string;
+          batchRedialOffline?: boolean;
+          listNodes?: boolean;
+          country?: string;
         };
 
         const denied = assertAdminAuth(request, body.adminToken);
@@ -50,13 +62,31 @@ export const Route = createFileRoute("/api/stack")({
           return Response.json({ ...stackStatus(), tickle });
         }
 
+        if (body.listNodes) {
+          return Response.json({
+            ok: true,
+            ...listOvpnNodes(body.country || "ANY"),
+            ...stackStatus(),
+          });
+        }
+
+        if (body.batchRedialOffline) {
+          const batch = batchRedialOfflineOvpn();
+          return Response.json({ ok: true, batch, ...stackStatus() });
+        }
+
         if (body.probe && body.slotId && body.slotKind) {
           const probe = await probeSlot(body.slotKind, body.slotId);
           return Response.json({ ...stackStatus(), probe });
         }
 
+        if (body.slotAction === "connect" && body.slotId && body.nodeIp) {
+          const slot = connectOvpnSlot(body.slotId, body.nodeIp);
+          return Response.json({ ok: slot.ok, slot, ...stackStatus() }, { status: slot.ok ? 200 : 400 });
+        }
+
         if (body.slotAction && body.slotId && body.slotKind) {
-          const slot = controlSlot(body.slotKind, body.slotId, body.slotAction);
+          const slot = controlSlot(body.slotKind, body.slotId, body.slotAction as "restart" | "stop");
           return Response.json({ ok: true, slot, ...stackStatus() });
         }
 
