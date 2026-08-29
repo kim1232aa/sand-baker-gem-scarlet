@@ -18,19 +18,36 @@ PID_FILE = BIN / "ovpn-slots.pid"
 ENV = {**os.environ, "LD_LIBRARY_PATH": str(NAT / "lib"), "PYTHONPATH": str(BIN)}
 UUID = (BIN / "uuid").read_text().strip() if (BIN / "uuid").exists() else "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
 
+# vpn_port is a preference; pick_profile falls back to any TCP if that port is empty.
+# Prefer JP/KR (VPNGate TCP 多); TH 常只有 UDP、RO 常空，保留少量试探槽。
 PLAN = [
+    # JP ×8
     {"id": "ovpn-jp", "country": "JP", "port": 9171, "vpn_port": "443"},
     {"id": "ovpn-jp2", "country": "JP", "port": 9174, "vpn_port": "443"},
-    {"id": "ovpn-jp3", "country": "JP", "port": 9175, "vpn_port": "443"},
-    {"id": "ovpn-jp4", "country": "JP", "port": 9179, "vpn_port": "443"},
+    {"id": "ovpn-jp3", "country": "JP", "port": 9175, "vpn_port": ""},
+    {"id": "ovpn-jp4", "country": "JP", "port": 9179, "vpn_port": ""},
+    {"id": "ovpn-jp5", "country": "JP", "port": 9185, "vpn_port": "443"},
+    {"id": "ovpn-jp6", "country": "JP", "port": 9186, "vpn_port": ""},
+    {"id": "ovpn-jp7", "country": "JP", "port": 9187, "vpn_port": ""},
+    {"id": "ovpn-jp8", "country": "JP", "port": 9188, "vpn_port": ""},
+    # KR ×8
     {"id": "ovpn-kr", "country": "KR", "port": 9172, "vpn_port": "995"},
     {"id": "ovpn-kr2", "country": "KR", "port": 9176, "vpn_port": "995"},
-    {"id": "ovpn-kr3", "country": "KR", "port": 9177, "vpn_port": "995"},
-    {"id": "ovpn-kr4", "country": "KR", "port": 9178, "vpn_port": "995"},
+    {"id": "ovpn-kr3", "country": "KR", "port": 9177, "vpn_port": ""},
+    {"id": "ovpn-kr4", "country": "KR", "port": 9178, "vpn_port": ""},
+    {"id": "ovpn-kr5", "country": "KR", "port": 9189, "vpn_port": "995"},
+    {"id": "ovpn-kr6", "country": "KR", "port": 9190, "vpn_port": ""},
+    {"id": "ovpn-kr7", "country": "KR", "port": 9191, "vpn_port": ""},
+    {"id": "ovpn-kr8", "country": "KR", "port": 9192, "vpn_port": ""},
+    # US / RU / VN / others
     {"id": "ovpn-us", "country": "US", "port": 9182, "vpn_port": ""},
+    {"id": "ovpn-us2", "country": "US", "port": 9193, "vpn_port": ""},
+    {"id": "ovpn-ru", "country": "RU", "port": 9194, "vpn_port": ""},
+    {"id": "ovpn-ru2", "country": "RU", "port": 9195, "vpn_port": ""},
+    {"id": "ovpn-vn", "country": "VN", "port": 9196, "vpn_port": ""},
+    {"id": "ovpn-tw", "country": "TW", "port": 9197, "vpn_port": ""},
     {"id": "ovpn-th", "country": "TH", "port": 9183, "vpn_port": ""},
-    {"id": "ovpn-th2", "country": "TH", "port": 9184, "vpn_port": ""},
-    {"id": "ovpn-ro", "country": "RO", "port": 9173, "vpn_port": "443"},
+    {"id": "ovpn-ro", "country": "RO", "port": 9173, "vpn_port": ""},
 ]
 
 _NODES: list[dict] = []
@@ -40,6 +57,68 @@ _SKIP: set[str] = set()
 
 def stamp(msg: str) -> None:
     LOG.open("a").write(time.strftime("%Y-%m-%dT%H:%M:%SZ ", time.gmtime()) + msg + "\n")
+
+
+def refresh_nodes(force: bool = False) -> list[dict]:
+    global _NODES, _NODES_AT
+    if force:
+        _NODES = []
+        _NODES_AT = 0.0
+    return vpngate_nodes()
+
+
+def load_slot_skips(slot_dir: Path) -> set[str]:
+    skips: set[str] = set()
+    p = slot_dir / "SKIP_REMOTES"
+    if not p.exists():
+        return skips
+    try:
+        for line in p.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                skips.add(line)
+    except OSError:
+        pass
+    return skips
+
+
+def remember_skip(slot_dir: Path, remote: str, keep: int = 12) -> None:
+    if not remote:
+        return
+    _SKIP.add(remote)
+    prev = [r for r in load_slot_skips(slot_dir) if r != remote]
+    prev.append(remote)
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    (slot_dir / "SKIP_REMOTES").write_text("\n".join(prev[-keep:]) + "\n")
+
+
+def parse_proto_port(cfg: str) -> tuple[str, str]:
+    proto = port = ""
+    for line in cfg.splitlines():
+        if line.startswith("proto "):
+            proto = line.split()[1]
+        if line.startswith("remote ") and len(line.split()) >= 3:
+            port = line.split()[2]
+    return proto, port
+
+
+def list_candidates(country: str, want_port: str = "", excluded: set[str] | None = None) -> list[dict]:
+    excluded = excluded or set()
+    cands: list[dict] = []
+    for n in vpngate_nodes():
+        if n.get("country") != country:
+            continue
+        proto, port = parse_proto_port(n["config"])
+        if not proto.startswith("tcp"):
+            continue
+        if want_port and port != want_port:
+            continue
+        key = f"{n['ip']}:{port}"
+        if key in excluded:
+            continue
+        cands.append({**n, "_remote": key, "_port": port, "_proto": proto})
+    cands.sort(key=lambda n: int(n.get("ping") or 9999))
+    return cands
 
 
 def pid_alive(pid: int) -> bool:
@@ -115,30 +194,30 @@ def used_remotes() -> set[str]:
     return used
 
 
-def pick_profile(slot: dict) -> str:
+def pick_profile(slot: dict, slot_dir: Path | None = None) -> str:
     want = str(slot.get("vpn_port") or "").strip()
     country = slot["country"]
-    used = used_remotes()
-    cands = []
-    for n in vpngate_nodes():
-        proto = port = ""
-        for line in n["config"].splitlines():
-            if line.startswith("proto "):
-                proto = line.split()[1]
-            if line.startswith("remote ") and len(line.split()) >= 3:
-                port = line.split()[2]
-        if n.get("country") != country or not proto.startswith("tcp"):
-            continue
-        if want and port != want:
-            continue
-        key = f"{n['ip']}:{port}"
-        if key in used:
-            continue
-        cands.append(n)
-    cands.sort(key=lambda n: int(n.get("ping") or 9999))
+    slot_dir = slot_dir or (ROOT / slot["id"])
+    excluded = used_remotes() | load_slot_skips(slot_dir)
+    # Prefer configured port; if empty pool, fall back to any TCP for that country.
+    cands = list_candidates(country, want, excluded)
+    if not cands and want:
+        stamp(f"{slot['id']} no tcp/{want} left for {country}, fallback any tcp")
+        cands = list_candidates(country, "", excluded)
     if not cands:
-        raise RuntimeError(f"no tcp/{want} VPNGate for {country}")
-    return cands[0]["config"]
+        # Last resort: refresh list and retry once without soft process skips.
+        refresh_nodes(force=True)
+        excluded = used_remotes() | load_slot_skips(slot_dir)
+        cands = list_candidates(country, want, excluded) or list_candidates(country, "", excluded)
+    if not cands:
+        # Absolute last: ignore SKIP_REMOTES history (still avoid other slots' remotes).
+        excluded = used_remotes()
+        cands = list_candidates(country, "", excluded)
+    if not cands:
+        raise RuntimeError(f"no tcp VPNGate for {country} (want={want or 'any'})")
+    chosen = cands[0]
+    stamp(f"{slot['id']} pick {chosen.get('_remote')} ping={chosen.get('ping')} pool={len(cands)}")
+    return chosen["config"]
 
 
 def make_netns(slot_dir: Path) -> int:
@@ -195,10 +274,10 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path) -> None:
     log = slot_dir / "openvpn.log"
     if pid_alive(pid) and log.exists() and "Initialization Sequence Completed" in log.read_text(errors="replace"):
         return
-    for _try in range(3):
+    for _try in range(5):
         cfg = slot_dir / "client.ovpn"
         try:
-            cfg.write_text(pick_profile(slot))
+            cfg.write_text(pick_profile(slot, slot_dir))
         except RuntimeError as e:
             stamp(f"{slot['id']} {e}")
             return
@@ -241,7 +320,6 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path) -> None:
         )
         (slot_dir / "openvpn-host.pid").write_text(str(proc.pid) + "\n")
         ok = False
-        fail = False
         for _ in range(22):
             time.sleep(1)
             text = log.read_text(errors="replace") if log.exists() else ""
@@ -251,19 +329,18 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path) -> None:
                 break
             if "AUTH_FAILED" in text or "Exiting due" in text:
                 stamp(f"{slot['id']} openvpn fail {remote}")
-                fail = True
                 break
         if ok:
             return
-        _SKIP.add(remote)
+        # Timeout or auth fail: remember remote and try next candidate.
+        remember_skip(slot_dir, remote)
+        stamp(f"{slot['id']} openvpn try={_try + 1}/5 skip {remote}")
         try:
             cfg.unlink()
         except OSError:
             pass
         kill_pidfile(slot_dir / "openvpn.pid")
-        if not fail:
-            stamp(f"{slot['id']} openvpn timeout {remote}")
-            return
+        kill_pidfile(slot_dir / "openvpn-host.pid")
 
 
 def ensure_socks(nspid: int, slot: dict, slot_dir: Path) -> None:
@@ -346,30 +423,97 @@ def ready_ips() -> set[str]:
     return ips
 
 
+def candidate_count(slot: dict, slot_dir: Path) -> int:
+    want = str(slot.get("vpn_port") or "").strip()
+    excluded = used_remotes() | load_slot_skips(slot_dir)
+    n = len(list_candidates(slot["country"], want, excluded))
+    if n == 0 and want:
+        n = len(list_candidates(slot["country"], "", excluded))
+    return n
+
+
 def bring_up(slot: dict) -> dict:
     slot_dir = ROOT / slot["id"]
     slot_dir.mkdir(parents=True, exist_ok=True)
     if (slot_dir / "DISABLED").exists():
         for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
             kill_pidfile(slot_dir / name)
-        return {**slot, "state": "down", "egress_ip": "", "kind": "openvpn", "disabled": True}
+        return {
+            **slot,
+            "state": "down",
+            "egress_ip": "",
+            "kind": "openvpn",
+            "disabled": True,
+            "remote": "",
+            "candidates": candidate_count(slot, slot_dir),
+        }
+    force = (slot_dir / "FORCE_REDIAL").exists()
+    if force:
+        try:
+            (slot_dir / "FORCE_REDIAL").unlink()
+        except OSError:
+            pass
+        refresh_nodes(force=True)
+        # Tear down datapath so probe cannot short-circuit on stale SOCKS.
+        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
+            kill_pidfile(slot_dir / name)
+        stamp(f"{slot['id']} force redial")
     if slot["id"] == "ovpn-jp":
         adopt_legacy_jp()
-    ip = probe(slot["port"])
+    ip = "" if force else probe(slot["port"])
     if ip:
-        return {**slot, "state": "ready", "egress_ip": ip, "kind": "openvpn"}
+        cfg = slot_dir / "client.ovpn"
+        remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+        return {
+            **slot,
+            "state": "ready",
+            "egress_ip": ip,
+            "kind": "openvpn",
+            "remote": remote,
+            "candidates": candidate_count(slot, slot_dir),
+        }
     nspid = make_netns(slot_dir)
     if not nspid:
-        return {**slot, "state": "down", "egress_ip": "", "kind": "openvpn"}
+        return {
+            **slot,
+            "state": "down",
+            "egress_ip": "",
+            "kind": "openvpn",
+            "remote": "",
+            "candidates": candidate_count(slot, slot_dir),
+        }
     ensure_slirp(nspid, slot_dir)
     ensure_openvpn(nspid, slot, slot_dir)
     ensure_socks(nspid, slot, slot_dir)
     time.sleep(0.5)
     ip = probe(slot["port"])
+    cfg = slot_dir / "client.ovpn"
+    remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
     if ip and ip in ready_ips():
         stamp(f"{slot['id']} duplicate egress {ip}, skip publish")
-        return {**slot, "state": "boot", "egress_ip": "", "kind": "openvpn"}
-    return {**slot, "state": "ready" if ip else "boot", "egress_ip": ip, "kind": "openvpn"}
+        remember_skip(slot_dir, remote)
+        try:
+            cfg.unlink()
+        except OSError:
+            pass
+        kill_pidfile(slot_dir / "openvpn.pid")
+        kill_pidfile(slot_dir / "openvpn-host.pid")
+        return {
+            **slot,
+            "state": "boot",
+            "egress_ip": "",
+            "kind": "openvpn",
+            "remote": "",
+            "candidates": candidate_count(slot, slot_dir),
+        }
+    return {
+        **slot,
+        "state": "ready" if ip else "boot",
+        "egress_ip": ip,
+        "kind": "openvpn",
+        "remote": remote,
+        "candidates": candidate_count(slot, slot_dir),
+    }
 
 
 def loop() -> None:
@@ -386,22 +530,44 @@ def loop() -> None:
     if sync_xray(PLAN):
         stamp("xray.json ovpn inbounds added")
     while True:
-        rows = []
+        rows: list[dict] = []
         seen: set[str] = set()
+        # Seed with previous status so UI keeps showing later slots while we work front ones.
+        prev_by_id: dict[str, dict] = {}
+        if STATUS.exists():
+            try:
+                for s in json.loads(STATUS.read_text()).get("slots", []):
+                    if s.get("id"):
+                        prev_by_id[s["id"]] = s
+            except Exception:
+                prev_by_id = {}
         for slot in PLAN:
             try:
                 row = bring_up(slot)
             except Exception as e:
                 stamp(f"{slot['id']} error {e}")
-                row = {**slot, "state": "down", "egress_ip": "", "kind": "openvpn"}
+                row = {**slot, "state": "down", "egress_ip": "", "kind": "openvpn", "remote": "", "candidates": 0}
             if row.get("state") == "ready" and row.get("egress_ip"):
                 if row["egress_ip"] in seen:
-                    row = {**row, "state": "boot", "egress_ip": ""}
+                    row = {**row, "state": "boot", "egress_ip": "", "remote": row.get("remote") or ""}
                 else:
                     seen.add(row["egress_ip"])
             rows.append(row)
-        STATUS.write_text(json.dumps({"updated": int(time.time()), "slots": rows}, ensure_ascii=False, indent=2) + "\n")
-        time.sleep(40)
+            # Publish partial progress: processed rows + untouched previous/planned stubs.
+            done = {r["id"] for r in rows}
+            partial = list(rows)
+            for s in PLAN:
+                if s["id"] in done:
+                    continue
+                old = prev_by_id.get(s["id"])
+                if old:
+                    partial.append(old)
+                else:
+                    partial.append({**s, "state": "boot", "egress_ip": "", "kind": "openvpn", "remote": "", "candidates": 0})
+            STATUS.write_text(
+                json.dumps({"updated": int(time.time()), "slots": partial}, ensure_ascii=False, indent=2) + "\n"
+            )
+        time.sleep(20)
 
 
 if __name__ == "__main__":

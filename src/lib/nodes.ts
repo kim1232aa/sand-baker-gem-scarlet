@@ -18,6 +18,11 @@ export type LiveExit = {
   vpn_port?: string | number;
   pid?: number;
   kind?: string;
+  /** Current OpenVPN remote host:port when known. */
+  remote?: string;
+  /** Remaining VPNGate TCP candidates after skips. */
+  candidates?: number;
+  disabled?: boolean;
 };
 
 export function socksPort(slot: LiveExit): number {

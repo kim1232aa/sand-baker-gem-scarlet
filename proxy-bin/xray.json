@@ -725,6 +725,234 @@
           "path": "/vless"
         }
       }
+    },
+    {
+      "tag": "in-ovpn-jp6",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp6.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-jp7",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp7.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-jp8",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-jp8.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-kr5",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr5.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-kr6",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr6.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-kr7",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr7.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-kr8",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-kr8.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-us2",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-us2.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-ru",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-ru.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-ru2",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-ru2.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-vn",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-vn.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    },
+    {
+      "tag": "in-ovpn-tw",
+      "listen": "/workspace/sand-baker-gem-scarlet/proxy-bin/socks/in-ovpn-tw.sock",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
     }
   ],
   "outbounds": [
@@ -1175,6 +1403,150 @@
           }
         ]
       }
+    },
+    {
+      "tag": "socks-ovpn-jp6",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9186
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-jp7",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9187
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-jp8",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9188
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-kr5",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9189
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-kr6",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9190
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-kr7",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9191
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-kr8",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9192
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-us2",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9193
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-ru",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9194
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-ru2",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9195
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-vn",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9196
+          }
+        ]
+      }
+    },
+    {
+      "tag": "socks-ovpn-tw",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 9197
+          }
+        ]
+      }
     }
   ],
   "routing": {
@@ -1438,6 +1810,90 @@
           "in-ovpn-th2"
         ],
         "outboundTag": "socks-ovpn-th2"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-jp6"
+        ],
+        "outboundTag": "socks-ovpn-jp6"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-jp7"
+        ],
+        "outboundTag": "socks-ovpn-jp7"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-jp8"
+        ],
+        "outboundTag": "socks-ovpn-jp8"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-kr5"
+        ],
+        "outboundTag": "socks-ovpn-kr5"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-kr6"
+        ],
+        "outboundTag": "socks-ovpn-kr6"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-kr7"
+        ],
+        "outboundTag": "socks-ovpn-kr7"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-kr8"
+        ],
+        "outboundTag": "socks-ovpn-kr8"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-us2"
+        ],
+        "outboundTag": "socks-ovpn-us2"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-ru"
+        ],
+        "outboundTag": "socks-ovpn-ru"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-ru2"
+        ],
+        "outboundTag": "socks-ovpn-ru2"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-vn"
+        ],
+        "outboundTag": "socks-ovpn-vn"
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "in-ovpn-tw"
+        ],
+        "outboundTag": "socks-ovpn-tw"
       }
     ]
   }

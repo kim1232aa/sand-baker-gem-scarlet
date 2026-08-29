@@ -118,7 +118,7 @@ export function VpnView() {
           <p className="text-xs font-medium tracking-widest text-subtle uppercase">OpenVPN</p>
           <h1 className="font-display mt-1 text-2xl font-medium tracking-tight">VPN 槽位</h1>
           <p className="mt-1 text-sm text-muted">
-            VPNGate TCP · 本机 SOCKS `127.0.0.1:917x`。JP/TH/RO 质量波动大；KR/US 通常更稳。重拨会删 client.ovpn 换节点。
+            VPNGate TCP · 24 槽 · 本机 SOCKS `127.0.0.1:9171+`。重拨会跳过旧 remote 换 IP；偏好端口空时回退任意 TCP。TH 常无 TCP、RO 常空。
           </p>
         </div>
         <Button variant="secondary" onClick={() => void restartMgr()}>
@@ -178,7 +178,9 @@ export function VpnView() {
                   <Badge variant={ok ? "ok" : "danger"}>{s.state || "down"}</Badge>
                 </p>
                 <p className="mt-1 font-mono text-xs text-muted">
-                  SOCKS {port || "—"} · VPN 端口 {String(s.vpn_port || "auto")} · IP {s.egress_ip || "—"}
+                  SOCKS {port || "—"} · 偏好端口 {String(s.vpn_port || "any")} · IP {s.egress_ip || "—"}
+                  {s.remote ? ` · remote ${s.remote}` : ""}
+                  {typeof s.candidates === "number" ? ` · 候选 ${s.candidates}` : ""}
                   {probe[s.id] ? ` · 探测 ${probe[s.id]}` : ""}
                 </p>
               </div>

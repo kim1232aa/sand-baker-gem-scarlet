@@ -220,7 +220,7 @@ export function controlSlot(kind: SlotKind, id: string, slotAction: "restart" | 
     return { ok: true, kind, id, slotAction };
   }
 
-  // restart
+  // restart / redial
   try {
     unlinkSync(disabled);
   } catch {
@@ -229,13 +229,43 @@ export function controlSlot(kind: SlotKind, id: string, slotAction: "restart" | 
   if (kind === "tor") {
     killPidFile(join(dir, "tor.pid"));
   } else {
-    killPidFile(join(dir, "openvpn.pid"));
-    killPidFile(join(dir, "openvpn-host.pid"));
+    // Remember current remote so pick_profile won't reselect the same node,
+    // then force a full datapath tear-down (SOCKS may still answer otherwise).
+    const cfg = join(dir, "client.ovpn");
     try {
-      unlinkSync(join(dir, "client.ovpn"));
+      if (existsSync(cfg)) {
+        const text = readFileSync(cfg, "utf8");
+        const remoteLine = text.split("\n").find((l) => l.startsWith("remote "));
+        if (remoteLine) {
+          const parts = remoteLine.trim().split(/\s+/);
+          const remote = parts.length >= 3 ? `${parts[1]}:${parts[2]}` : parts[1] || "";
+          if (remote) {
+            const skipFile = join(dir, "SKIP_REMOTES");
+            let prev: string[] = [];
+            try {
+              if (existsSync(skipFile)) {
+                prev = readFileSync(skipFile, "utf8")
+                  .split("\n")
+                  .map((l) => l.trim())
+                  .filter((l) => l && !l.startsWith("#") && l !== remote);
+              }
+            } catch {
+              prev = [];
+            }
+            prev.push(remote);
+            writeFileSync(skipFile, prev.slice(-12).join("\n") + "\n");
+          }
+        }
+        unlinkSync(cfg);
+      }
     } catch {
       /* ignore */
     }
+    writeFileSync(join(dir, "FORCE_REDIAL"), `${new Date().toISOString()}\n`);
+    killPidFile(join(dir, "openvpn.pid"));
+    killPidFile(join(dir, "openvpn-host.pid"));
+    killPidFile(join(dir, "fwd.pid"));
+    killPidFile(join(dir, "ns-socks.pid"));
   }
   return { ok: true, kind, id, slotAction };
 }
