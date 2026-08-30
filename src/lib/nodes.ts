@@ -119,20 +119,18 @@ function egressKindLabel(slot: LiveExit): string {
 }
 
 /**
- * kui `_exit_clash_name` + egress IP (no TestISP yet → 未验证 / VPNGate|Tor).
+ * kui `_exit_clash_name`: `{CC}{类型}·{ISP}·{slotId}` (no egress IP in name).
  * Examples:
- *   JP未验证·VPNGate·ovpn-jp2·219.28.202.187
- *   FI-FB-US未验证·VPNGate·ovpn-us2·203.0.113.9
- *   DE未验证·Tor·de·185.220.101.42
+ *   JP未验证·VPNGate·ovpn-jp2
+ *   FI-FB-US未验证·VPNGate·ovpn-us2
+ *   DE未验证·Tor·de
  */
 export function exitLabel(slot: LiveExit): string {
   const country = exitCountryLabel(slot);
   const kind = egressKindLabel(slot);
   const isp = shortIsp(slot.isp_org, slot.kind);
   const id = String(slot.id || "x");
-  const base = `${country}${kind}·${isp}·${id}`;
-  const ip = String(slot.egress_ip || "").trim();
-  return ip ? `${base}·${ip}` : base;
+  return `${country}${kind}·${isp}·${id}`;
 }
 
 export function readySocksSlots(exits: LiveExit[]): LiveExit[] {
