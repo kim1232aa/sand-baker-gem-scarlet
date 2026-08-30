@@ -6,6 +6,7 @@ export type ViewId =
   | "tor"
   | "vpn"
   | "socks"
+  | "health"
   | "exits"
   | "logs"
   | "settings";

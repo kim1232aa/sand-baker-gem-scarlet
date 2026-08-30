@@ -389,7 +389,7 @@ def _check_residential_fallback(ip: str, timeout: int = 10):
     """Secondary classifier via ip-api.com when TestISP has no data for the IP."""
     try:
         req = urllib.request.Request(
-            f"http://ip-api.com/json/{ip}?fields=status,country,isp,org,as,asname,hosting,proxy,mobile,query",
+            f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,isp,org,as,asname,hosting,proxy,mobile,query",
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
         )
         with direct_url_opener().open(req, timeout=timeout) as response:
@@ -586,32 +586,40 @@ def _probe_classification(url: str, code: str, returncode: int) -> str:
     return "unexpected_status"
 
 
-def probe_targets(
-    interface: str,
-    urls: tuple[str, ...] | list[str],
+def _probe_targets_commands(
+    targets: tuple[str, ...],
+    *,
+    interface: str | None = None,
+    socks: str | None = None,
+    timeout: int = 10,
     run: Callable[..., Any] = subprocess.run,
 ) -> dict[str, Any]:
-    custom_targets = tuple(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
-    targets = (DEFAULT_STREAM_URL, *[url for url in custom_targets if url != DEFAULT_STREAM_URL])
     attempts = []
     for url in targets:
         started = time.monotonic()
         command = [
             "curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
-            "-A", "Mozilla/5.0", "-m", "10", "--location", "--max-redirs", "20",
-            "--interface", interface,
-            "--doh-url", "https://cloudflare-dns.com/dns-query",
-            "--resolve", "cloudflare-dns.com:443:1.1.1.1",
+            "-A", "Mozilla/5.0", "-m", str(timeout), "--location", "--max-redirs", "20",
         ]
+        if socks:
+            command.extend(["--socks5-hostname", socks])
+        elif interface:
+            command.extend(
+                [
+                    "--interface", interface,
+                    "--doh-url", "https://cloudflare-dns.com/dns-query",
+                    "--resolve", "cloudflare-dns.com:443:1.1.1.1",
+                ]
+            )
         result = run([*command, url], capture_output=True, text=True, check=False)
-        code = result.stdout.strip()
-        accepted = result.returncode == 0 and _probe_accepts(url, code)
+        code = (getattr(result, "stdout", "") or "").strip()
+        accepted = getattr(result, "returncode", -1) == 0 and _probe_accepts(url, code)
         attempts.append(
             {
                 "url": url,
                 "code": code,
                 "accepted": accepted,
-                "classification": _probe_classification(url, code, result.returncode),
+                "classification": _probe_classification(url, code, getattr(result, "returncode", -1)),
                 "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)),
                 "error": (getattr(result, "stderr", "") or "").strip()[:500],
             }
@@ -624,6 +632,32 @@ def probe_targets(
         "accepted": base_ok and custom_ok,
         "attempts": attempts,
     }
+
+
+def probe_targets(
+    interface: str,
+    urls: tuple[str, ...] | list[str],
+    run: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    custom_targets = tuple(dict.fromkeys(str(url).strip() for url in urls if str(url).strip()))
+    targets = (DEFAULT_STREAM_URL, *[url for url in custom_targets if url != DEFAULT_STREAM_URL])
+    return _probe_targets_commands(targets, interface=interface, run=run)
+
+
+def probe_targets_socks(
+    socks_host: str,
+    socks_port: int,
+    urls: tuple[str, ...] | list[str] | None = None,
+    *,
+    timeout: int = 10,
+    run: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    """Same acceptance rules as probe_targets, but via local SOCKS (sand-baker exits)."""
+    custom = urls if urls is not None else STREAM_URLS
+    custom_targets = tuple(dict.fromkeys(str(url).strip() for url in custom if str(url).strip()))
+    targets = (DEFAULT_STREAM_URL, *[url for url in custom_targets if url != DEFAULT_STREAM_URL])
+    socks = f"{socks_host}:{int(socks_port)}"
+    return _probe_targets_commands(targets, socks=socks, timeout=timeout, run=run)
 
 
 def check_streaming(

@@ -193,8 +193,34 @@ def probe_socks(port: int) -> str:
         return ""
 
 
+_TOR_PROBE_BUDGET = 3  # max fresh multi-URL probes per snapshot (observe-only)
+
+
+def _load_tor_check(slot_dir: Path) -> dict:
+    path = slot_dir / "CHECK_RESULT"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_tor_check(slot_dir: Path, check_result: dict) -> None:
+    try:
+        (slot_dir / "CHECK_RESULT").write_text(
+            json.dumps(check_result, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
 def snapshot() -> list[dict]:
-    from kui.egress_meta import attach_meta
+    from kui.egress_meta import attach_meta, load_meta, residential_summary
+    from kui.vpngate import probe_targets_socks
+
+    probe_budget = {"left": _TOR_PROBE_BUDGET}
 
     def one(slot: dict) -> dict:
         slot_dir = TOR_ROOT / slot["id"]
@@ -225,8 +251,46 @@ def snapshot() -> list[dict]:
             "pid": pid if pid_alive(pid) else 0,
             "kind": "tor",
         }
-        # TestISP/ip-api classify once per egress IP (cached under tor/<id>/EGRESS_META).
+        # Classify only — Tor never rejects on datacenter / probe fail.
         row = attach_meta(row, slot_dir, timeout=8)
+        if row.get("state") == "ready" and ip:
+            cached = _load_tor_check(slot_dir)
+            meta_cached = load_meta(slot_dir) or {}
+            cached_fresh = (
+                cached
+                and str(meta_cached.get("ip") or "") == ip
+                and int(cached.get("checked_at") or 0) + 3600 > int(time.time())
+            )
+            if cached_fresh:
+                check_result = cached
+            elif probe_budget["left"] > 0:
+                probe_budget["left"] -= 1
+                targets = probe_targets_socks("127.0.0.1", int(slot["port"]), timeout=6)
+                check_result = {
+                    "residential": residential_summary(
+                        {
+                            "egress_type": row.get("egress_type"),
+                            "egress_type_label": row.get("egress_type_label"),
+                            "is_residential": row.get("is_residential"),
+                            "isp_org": row.get("isp_org"),
+                            "geo_country": row.get("geo_country"),
+                            "city": row.get("city"),
+                            "source": meta_cached.get("source") or "",
+                        }
+                    ),
+                    "targets": targets,
+                    "reject_reason": "",
+                    "checked_at": int(time.time()),
+                }
+                _save_tor_check(slot_dir, check_result)
+            else:
+                check_result = cached or {
+                    "residential": residential_summary(row),
+                    "targets": {},
+                    "reject_reason": "",
+                    "checked_at": int(time.time()),
+                }
+            row["check_result"] = check_result
         stamp(
             f"slot {slot['id']} state={row['state']} ip={ip or '-'} "
             f"type={row.get('egress_type') or '-'} isp={row.get('isp_org') or '-'}"
@@ -240,7 +304,7 @@ def snapshot() -> list[dict]:
     for r in rows:
         ip = r.get("egress_ip") or ""
         if ip and ip in seen:
-            out.append({**r, "state": "boot", "egress_ip": "", "egress_type": "unverified", "isp_org": ""})
+            out.append({**r, "state": "boot", "egress_ip": "", "egress_type": "unverified", "isp_org": "", "check_result": {}})
         else:
             if ip:
                 seen.add(ip)

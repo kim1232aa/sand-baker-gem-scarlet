@@ -26,6 +26,7 @@ const NAV: { id: ViewId; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "tor", label: "Tor", icon: Shield },
   { id: "vpn", label: "VPN", icon: Globe2 },
   { id: "socks", label: "SOCKS", icon: Cable },
+  { id: "health", label: "巡检", icon: Activity },
   { id: "exits", label: "代理池", icon: Waypoints },
   { id: "logs", label: "日志", icon: ScrollText },
   { id: "settings", label: "设置", icon: Settings2 },

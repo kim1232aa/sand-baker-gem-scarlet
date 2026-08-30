@@ -8,6 +8,35 @@ export type SubNode = {
   kind?: "openvpn" | "tor" | "front";
 };
 
+export type CheckAttempt = {
+  url?: string;
+  code?: string;
+  accepted?: boolean;
+  classification?: string;
+  elapsed_ms?: number;
+  error?: string;
+};
+
+export type CheckResult = {
+  residential?: {
+    egress_type?: string;
+    egress_type_label?: string;
+    is_residential?: boolean;
+    isp_org?: string;
+    geo_country?: string;
+    city?: string;
+    source?: string;
+  };
+  targets?: {
+    base_ok?: boolean;
+    custom_ok?: boolean;
+    accepted?: boolean;
+    attempts?: CheckAttempt[];
+  };
+  reject_reason?: string;
+  checked_at?: number;
+};
+
 export type LiveExit = {
   id: string;
   country: string;
@@ -30,9 +59,15 @@ export type LiveExit = {
   country_fallback?: boolean;
   fallback_country?: string;
   target_country?: string;
-  /** Optional TestISP-style fields (future); default 未验证 / VPNGate|Tor */
-  egress_type?: "residential" | "datacenter" | "enterprise" | "unverified";
+  /** TestISP / ip-api classification */
+  egress_type?: "residential" | "datacenter" | "enterprise" | "unverified" | string;
+  egress_type_label?: string;
   isp_org?: string;
+  geo_country?: string;
+  city?: string;
+  is_residential?: boolean;
+  reject_reason?: string;
+  check_result?: CheckResult;
 };
 
 export type OvpnCandidate = {
@@ -70,6 +105,53 @@ export function exitCountryLabel(slot: LiveExit): string {
   return String(slot.country || "XX").toUpperCase() || "XX";
 }
 
+export const COUNTRY_NAMES_ZH: Record<string, string> = {
+  AE: "阿联酋",
+  AT: "奥地利",
+  AU: "澳大利亚",
+  BE: "比利时",
+  BR: "巴西",
+  CA: "加拿大",
+  CH: "瑞士",
+  CZ: "捷克",
+  DE: "德国",
+  DK: "丹麦",
+  ES: "西班牙",
+  FI: "芬兰",
+  FR: "法国",
+  GB: "英国",
+  GR: "希腊",
+  HK: "香港",
+  HR: "克罗地亚",
+  HU: "匈牙利",
+  ID: "印度尼西亚",
+  IE: "爱尔兰",
+  IN: "印度",
+  IS: "冰岛",
+  IT: "意大利",
+  JP: "日本",
+  KR: "韩国",
+  LU: "卢森堡",
+  MY: "马来西亚",
+  NL: "荷兰",
+  NO: "挪威",
+  NZ: "新西兰",
+  PH: "菲律宾",
+  PL: "波兰",
+  PT: "葡萄牙",
+  RO: "罗马尼亚",
+  RU: "俄罗斯",
+  SE: "瑞典",
+  SG: "新加坡",
+  TH: "泰国",
+  TR: "土耳其",
+  TW: "台湾",
+  UA: "乌克兰",
+  US: "美国",
+  VN: "越南",
+  ZA: "南非",
+};
+
 const ISP_SHORT: Record<string, string> = {
   "sony network communications": "SonyNURO",
   "so-net": "So-net",
@@ -106,28 +188,62 @@ function shortIsp(raw: string | undefined, kind: string | undefined): string {
   return kind === "openvpn" ? "VPNGate" : "Tor";
 }
 
-function egressKindLabel(slot: LiveExit): string {
+function egressTypeLabel(slot: LiveExit): string {
+  const explicit = String(slot.egress_type_label || slot.check_result?.residential?.egress_type_label || "").trim();
+  if (explicit) return explicit;
+  const t = String(slot.egress_type || "unverified").toLowerCase();
+  if (t === "residential") return "住宅IP";
+  if (t === "datacenter") return "机房IP";
+  if (t === "enterprise") return "企业/混合网络IP";
+  return "未验证IP";
+}
+
+function egressKindShort(slot: LiveExit): string {
   const t = String(slot.egress_type || "unverified").toLowerCase();
   if (t === "residential") return "住宅";
   if (t === "datacenter") return "机房";
   if (t === "enterprise") return "企业";
-  // unknown / unverified / missing
   return "未验证";
 }
 
+function friendlyCountryHead(slot: LiveExit): string {
+  const cc = exitCountryLabel(slot);
+  if (cc.includes("-FB-")) {
+    const [actual, , target] = cc.split("-");
+    const aZh = COUNTRY_NAMES_ZH[actual || ""] || "";
+    const tZh = COUNTRY_NAMES_ZH[target || ""] || "";
+    if (aZh && tZh) return `${actual}-${aZh}(FB←${target}-${tZh})`;
+    return cc;
+  }
+  const zh = COUNTRY_NAMES_ZH[cc] || "";
+  const city = String(slot.city || slot.check_result?.residential?.city || "").trim();
+  if (zh && city && city.toLowerCase() !== zh.toLowerCase()) return `${cc}-${zh}-${city}`;
+  if (zh) return `${cc}-${zh}`;
+  return cc || "XX";
+}
+
 /**
- * kui `_exit_clash_name`: `{CC}{类型}·{ISP}·{slotId}` (no egress IP in name).
- * Examples:
- *   JP未验证·VPNGate·ovpn-jp2
- *   FI-FB-US未验证·VPNGate·ovpn-us2
- *   DE未验证·Tor·de
+ * kui `_friendly_slot_name` (primary for UI + Clash/SOCKS/VLESS remarks):
+ * `JP-日本-Tokyo | 住宅IP | SoftBank | 203.0.113.9 | ovpn-jp2`
  */
 export function exitLabel(slot: LiveExit): string {
+  const parts = [
+    friendlyCountryHead(slot),
+    egressTypeLabel(slot),
+    shortIsp(slot.isp_org || slot.check_result?.residential?.isp_org, slot.kind),
+  ];
+  const ip = String(slot.egress_ip || "").trim();
+  if (ip) parts.push(ip);
+  parts.push(String(slot.id || "x"));
+  return parts.join(" | ");
+}
+
+/** Compact kui `_exit_clash_name` kept as fallback helper. */
+export function exitClashShort(slot: LiveExit): string {
   const country = exitCountryLabel(slot);
-  const kind = egressKindLabel(slot);
-  const isp = shortIsp(slot.isp_org, slot.kind);
-  const id = String(slot.id || "x");
-  return `${country}${kind}·${isp}·${id}`;
+  const kind = egressKindShort(slot);
+  const isp = shortIsp(slot.isp_org || slot.check_result?.residential?.isp_org, slot.kind);
+  return `${country}${kind}·${isp}·${String(slot.id || "x")}`;
 }
 
 export function readySocksSlots(exits: LiveExit[]): LiveExit[] {
@@ -139,7 +255,7 @@ export function buildSocksTxt(exits: LiveExit[]): string {
     readySocksSlots(exits)
       .map((s) => {
         const port = socksPort(s);
-        return `socks5://127.0.0.1:${port}#${exitLabel(s).replace(/·/g, "-")}`;
+        return `socks5://127.0.0.1:${port}#${exitLabel(s).replace(/[·|]/g, "-").replace(/\s+/g, "")}`;
       })
       .join("\n") + (readySocksSlots(exits).length ? "\n" : "")
   );

@@ -8,6 +8,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+import re
 
 BIN = Path(os.environ.get("PROXY_BIN") or Path(__file__).resolve().parents[1])
 NAT = BIN / "native"
@@ -58,6 +59,10 @@ COUNTRY_FALLBACK_AFTER = 2
 PENALIZE_REDIAL = 3000
 PENALIZE_FAIL = 10000
 PENALIZE_TIMEOUT = 5000
+PENALIZE_COUNTRY_MISMATCH = 20000
+PENALIZE_UNKNOWN = 5000
+PENALIZE_DATACENTER = 50000
+PENALIZE_PROBE_FAIL = 3000
 
 
 def stamp(msg: str) -> None:
@@ -812,6 +817,174 @@ def with_egress_meta(row: dict, slot_dir: Path) -> dict:
     return attach_meta(row, slot_dir, timeout=8)
 
 
+def allow_non_residential() -> bool:
+    """Default false (stricter than kui compose). Env can reopen datacenter publishes."""
+    for key in ("ALLOW_NON_RESIDENTIAL", "KUI_ALLOW_NON_RESIDENTIAL"):
+        val = str(os.environ.get(key, "")).strip().lower()
+        if val in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _entry_from_remote(remote: str) -> str:
+    remote = str(remote or "").strip()
+    return remote.split(":", 1)[0] if remote else ""
+
+
+def reject_ready(
+    slot: dict,
+    slot_dir: Path,
+    *,
+    remote: str,
+    reason: str,
+    penalty: int,
+    meta: dict | None = None,
+    targets: dict | None = None,
+) -> dict:
+    """Penalize entry, drop tunnel profile, publish boot with check_result reject."""
+    import time as _time
+
+    from kui.egress_meta import residential_summary
+
+    entry = _entry_from_remote(remote)
+    if remote:
+        remember_skip(slot_dir, remote)
+    if entry:
+        node_pool().penalize(entry, penalty)
+    teardown_tunnel(slot_dir, drop_cfg=True)
+    stamp(f"{slot['id']} reject ready reason={reason} penalize={entry or '-'} amount={penalty}")
+    check_result = {
+        "residential": residential_summary(meta or {}),
+        "targets": targets or {},
+        "reject_reason": reason,
+        "checked_at": int(_time.time()),
+    }
+    return {
+        **slot,
+        "state": "boot",
+        "egress_ip": "",
+        "kind": "openvpn",
+        "egress_type": (meta or {}).get("egress_type") or "unverified",
+        "egress_type_label": (meta or {}).get("egress_type_label") or "未验证IP",
+        "isp_org": (meta or {}).get("isp_org") or "",
+        "geo_country": (meta or {}).get("geo_country") or "",
+        "city": (meta or {}).get("city") or "",
+        "reject_reason": reason,
+        "check_result": check_result,
+        **slot_status_extra(slot, slot_dir),
+    }
+
+
+def gate_ready_exit(slot: dict, slot_dir: Path, ip: str, remote: str) -> dict | None:
+    """Country mismatch → residential → SOCKS probe set. None = pass; else boot reject row."""
+    import re
+    import time as _time
+
+    from kui.egress_meta import meta_for_ip, residential_summary
+    from kui.vpngate import probe_targets_socks
+
+    meta = meta_for_ip(slot_dir, ip, force=False, timeout=8)
+    extra = slot_status_extra(slot, slot_dir, remote)
+    target_cc = str(slot.get("country") or "").upper()
+    geo_cc = str(meta.get("geo_country") or "").upper()
+    fallback = bool(extra.get("country_fallback"))
+
+    if (
+        not fallback
+        and target_cc
+        and target_cc not in {"ANY", "XX"}
+        and re.fullmatch(r"[A-Z]{2}", geo_cc)
+        and geo_cc != target_cc
+    ):
+        return reject_ready(
+            slot,
+            slot_dir,
+            remote=remote,
+            reason="country_mismatch",
+            penalty=PENALIZE_COUNTRY_MISMATCH,
+            meta=meta,
+        )
+
+    egress_type = str(meta.get("egress_type") or "unverified").lower()
+    if egress_type == "residential":
+        pass
+    elif egress_type == "datacenter" and allow_non_residential():
+        stamp(f"{slot['id']} allow datacenter via ALLOW_NON_RESIDENTIAL ip={ip}")
+    else:
+        reason = "datacenter" if egress_type == "datacenter" else "unknown_type"
+        penalty = PENALIZE_DATACENTER if egress_type == "datacenter" else PENALIZE_UNKNOWN
+        return reject_ready(
+            slot,
+            slot_dir,
+            remote=remote,
+            reason=reason,
+            penalty=penalty,
+            meta=meta,
+        )
+
+    targets = probe_targets_socks("127.0.0.1", int(slot["port"]), timeout=8)
+    if not targets.get("accepted"):
+        return reject_ready(
+            slot,
+            slot_dir,
+            remote=remote,
+            reason="probe_fail",
+            penalty=PENALIZE_PROBE_FAIL,
+            meta=meta,
+            targets=targets,
+        )
+
+    check_result = {
+        "residential": residential_summary(meta),
+        "targets": targets,
+        "reject_reason": "",
+        "checked_at": int(_time.time()),
+    }
+    try:
+        (slot_dir / "CHECK_RESULT").write_text(
+            json.dumps(check_result, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return None
+
+
+def load_check_result(slot_dir: Path) -> dict:
+    path = slot_dir / "CHECK_RESULT"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def publish_ready(slot: dict, slot_dir: Path, ip: str, remote: str) -> dict:
+    """Run gates; on pass attach meta + check_result and publish ready."""
+    rejected = gate_ready_exit(slot, slot_dir, ip, remote)
+    if rejected is not None:
+        return rejected
+    check_result = load_check_result(slot_dir)
+    residential = check_result.get("residential") if isinstance(check_result.get("residential"), dict) else {}
+    row = {
+        **slot,
+        "state": "ready",
+        "egress_ip": ip,
+        "kind": "openvpn",
+        "egress_type": residential.get("egress_type") or "unverified",
+        "egress_type_label": residential.get("egress_type_label") or "未验证IP",
+        "isp_org": residential.get("isp_org") or "",
+        "geo_country": residential.get("geo_country") or "",
+        "city": residential.get("city") or "",
+        "is_residential": bool(residential.get("is_residential")),
+        "reject_reason": "",
+        "check_result": check_result,
+        **slot_status_extra(slot, slot_dir, remote),
+    }
+    return row
+
+
 def begin_redial(slot: dict, slot_dir: Path, *, reason: str) -> None:
     """Penalize current entry, bump generation, tear down tunnel (kui health/redial)."""
     entry_ip = ""
@@ -884,7 +1057,7 @@ def bring_up(slot: dict) -> dict:
         adopt_legacy_jp()
     start_gen = generation_of(slot_dir)
 
-    # Fast health path: if SOCKS still works, keep publishing ready (kui health ok).
+    # Fast health path: if SOCKS still works, re-validate gates then publish ready.
     if not force:
         ip = probe(slot["port"], timeout=4)
         if ip:
@@ -892,13 +1065,41 @@ def bring_up(slot: dict) -> dict:
             set_failures(slot_dir, 0)
             cfg = slot_dir / "client.ovpn"
             remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
-            return finish({
-                **slot,
-                "state": "ready",
-                "egress_ip": ip,
-                "kind": "openvpn",
-                **slot_status_extra(slot, slot_dir, remote),
-            })
+            # Reuse cached CHECK_RESULT when same IP already gated this generation.
+            cached = load_check_result(slot_dir)
+            cached_ip = ""
+            if isinstance(cached.get("residential"), dict):
+                # Prefer EGRESS_META ip
+                from kui.egress_meta import load_meta
+
+                meta_cached = load_meta(slot_dir) or {}
+                cached_ip = str(meta_cached.get("ip") or "")
+            residential = cached.get("residential") if isinstance(cached.get("residential"), dict) else {}
+            cached_geo = str(residential.get("geo_country") or "").strip().upper()
+            cache_ok = (
+                cached
+                and cached.get("reject_reason") in (None, "")
+                and cached_ip == ip
+                and cached.get("targets", {}).get("accepted")
+                and bool(re.fullmatch(r"[A-Z]{2}", cached_geo))
+            )
+            if cache_ok:
+                return finish({
+                    **slot,
+                    "state": "ready",
+                    "egress_ip": ip,
+                    "kind": "openvpn",
+                    "egress_type": residential.get("egress_type") or "unverified",
+                    "egress_type_label": residential.get("egress_type_label") or "未验证IP",
+                    "isp_org": residential.get("isp_org") or "",
+                    "geo_country": residential.get("geo_country") or "",
+                    "city": residential.get("city") or "",
+                    "is_residential": bool(residential.get("is_residential")),
+                    "reject_reason": "",
+                    "check_result": cached,
+                    **slot_status_extra(slot, slot_dir, remote),
+                })
+            return finish(publish_ready(slot, slot_dir, ip, remote))
         # Probe failed. If openvpn still claims initialized, count health fails then auto-redial.
         if openvpn_initialized(slot_dir):
             hf = health_fails_of(slot_dir) + 1
@@ -976,7 +1177,8 @@ def bring_up(slot: dict) -> dict:
     if ip:
         set_failures(slot_dir, 0)
         set_health_fails(slot_dir, 0)
-    elif dial.get("ok"):
+        return finish(publish_ready(slot, slot_dir, ip, remote))
+    if dial.get("ok"):
         # OpenVPN said ready but SOCKS still dead — count as health fail and retry next loop.
         hf = health_fails_of(slot_dir) + 1
         set_health_fails(slot_dir, hf)
@@ -985,8 +1187,8 @@ def bring_up(slot: dict) -> dict:
             begin_redial(slot, slot_dir, reason="post-dial-socks")
     return finish({
         **slot,
-        "state": "ready" if ip else "boot",
-        "egress_ip": ip,
+        "state": "boot",
+        "egress_ip": "",
         "kind": "openvpn",
         **slot_status_extra(slot, slot_dir, remote),
     })

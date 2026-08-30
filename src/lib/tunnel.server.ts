@@ -362,7 +362,83 @@ export async function probeSlot(kind: SlotKind, id: string) {
       { timeout: 15000 },
     );
     const ip = String(stdout || "").trim();
-    return { ok: Boolean(ip), id, kind, port, ip, ms: Date.now() - started };
+    // Multi-URL connectivity set (kui STREAM_URLS via SOCKS).
+    const urls = [
+      "https://www.gstatic.com/generate_204",
+      "https://www.google.com/",
+      "https://chatgpt.com",
+      "https://cn.tradingview.com",
+      "https://claude.ai",
+    ];
+    const attempts: {
+      url: string;
+      code: string;
+      accepted: boolean;
+      classification: string;
+      elapsed_ms: number;
+    }[] = [];
+    for (const url of urls) {
+      const t0 = Date.now();
+      try {
+        const { stdout: codeOut } = await execFileAsync(
+          "curl",
+          [
+            "-o",
+            "/dev/null",
+            "-s",
+            "-w",
+            "%{http_code}",
+            "-A",
+            "Mozilla/5.0",
+            "-m",
+            "8",
+            "--location",
+            "--max-redirs",
+            "20",
+            "--socks5-hostname",
+            `127.0.0.1:${port}`,
+            url,
+          ],
+          { timeout: 12000 },
+        );
+        const code = String(codeOut || "").trim();
+        const is204 = url.includes("generate_204");
+        const n = Number(code);
+        const accepted = is204
+          ? code === "204"
+          : Number.isFinite(n) && ((n >= 200 && n < 300) || (n >= 400 && n < 500 && n !== 407));
+        attempts.push({
+          url,
+          code,
+          accepted,
+          classification: accepted ? "explicit_response" : "unexpected_status",
+          elapsed_ms: Date.now() - t0,
+        });
+      } catch (err) {
+        attempts.push({
+          url,
+          code: "000",
+          accepted: false,
+          classification: "timeout",
+          elapsed_ms: Date.now() - t0,
+        });
+      }
+    }
+    const base_ok = Boolean(attempts[0]?.accepted);
+    const custom_ok = attempts.slice(1).length > 0 && attempts.slice(1).every((a) => a.accepted);
+    return {
+      ok: Boolean(ip),
+      id,
+      kind,
+      port,
+      ip,
+      ms: Date.now() - started,
+      targets: { base_ok, custom_ok, accepted: base_ok && custom_ok, attempts },
+      egress_type: row?.egress_type,
+      isp_org: row?.isp_org,
+      geo_country: row?.geo_country,
+      city: row?.city,
+    };
   } catch (e) {
     return { ok: false, id, kind, port, error: e instanceof Error ? e.message : String(e), ms: Date.now() - started };
   }

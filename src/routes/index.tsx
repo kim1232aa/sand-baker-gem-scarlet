@@ -10,6 +10,7 @@ import { SettingsView } from "@/components/views/settings";
 import { TorView } from "@/components/views/tor";
 import { VpnView } from "@/components/views/vpn";
 import { SocksView } from "@/components/views/socks";
+import { HealthView } from "@/components/views/health";
 import { RelaysView } from "@/components/views/relays";
 import { useAdminStore } from "@/lib/store";
 
@@ -41,6 +42,7 @@ function Home() {
         {view === "tor" ? <TorView /> : null}
         {view === "vpn" ? <VpnView /> : null}
         {view === "socks" ? <SocksView /> : null}
+        {view === "health" ? <HealthView /> : null}
         {view === "exits" ? <ExitsView /> : null}
         {view === "logs" ? <LogsView /> : null}
         {view === "settings" ? <SettingsView /> : null}
