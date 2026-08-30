@@ -78,6 +78,11 @@ export type OvpnCandidate = {
   port?: string;
   proto?: string;
   remote?: string;
+  /** Pre-dial VPNGate entry classify (heuristic; entry ≠ egress). */
+  entry_egress_type?: string;
+  entry_egress_type_label?: string;
+  entry_isp_org?: string;
+  entry_geo_country?: string;
 };
 
 export function socksPort(slot: LiveExit): number {

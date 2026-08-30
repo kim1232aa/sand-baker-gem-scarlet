@@ -267,6 +267,8 @@ class NodePool:
         self._lock = threading.RLock()
         self._nodes: dict[str, dict[str, Any]] = {}
         self._penalties: dict[str, int] = {}
+        # Entry-IP residential soft demotion (reset on each classify pass; not additive).
+        self._soft_penalties: dict[str, int] = {}
 
     def replace(self, nodes: list[dict[str, Any]]) -> None:
         with self._lock:
@@ -278,12 +280,55 @@ class NodePool:
                     # 保留惩罚性 ping，防止坏节点被新快照刷新后又回到前列
                     node = dict(node)
                     node["ping"] = max(int(node.get("ping", 9999)), int(previous.get("ping", 9999)))
+                    # Keep prior entry classify annotations until refresh rewrites them.
+                    for key in (
+                        "entry_egress_type",
+                        "entry_egress_type_label",
+                        "entry_isp_org",
+                        "entry_geo_country",
+                        "entry_city",
+                        "entry_is_residential",
+                    ):
+                        if key not in node and key in previous:
+                            node[key] = previous[key]
                 merged[ip] = node
             self._nodes = merged
+            # Drop soft penalties for IPs that left the pool.
+            self._soft_penalties = {ip: amt for ip, amt in self._soft_penalties.items() if ip in merged}
 
     def penalize(self, ip: str, amount: int) -> None:
         with self._lock:
             self._penalties[ip] = self._penalties.get(ip, 0) + amount
+
+    def set_soft_penalties(self, mapping: dict[str, int]) -> None:
+        """Replace entry soft-penalty map (absolute amounts, not additive)."""
+        with self._lock:
+            cleaned = {str(ip): max(0, int(amount)) for ip, amount in mapping.items() if ip}
+            # Keep soft only for IPs still in pool; others ignored until they reappear.
+            self._soft_penalties = {ip: amt for ip, amt in cleaned.items() if ip in self._nodes}
+
+    def annotate_entries(self, metas: dict[str, dict[str, Any]]) -> None:
+        """Attach entry_* classify fields onto in-memory node dicts."""
+        with self._lock:
+            for ip, meta in metas.items():
+                node = self._nodes.get(str(ip))
+                if not node or not isinstance(meta, dict):
+                    continue
+                node["entry_egress_type"] = str(meta.get("egress_type") or "unverified")
+                node["entry_egress_type_label"] = str(meta.get("egress_type_label") or "")
+                node["entry_isp_org"] = str(meta.get("isp_org") or "")
+                node["entry_geo_country"] = str(meta.get("geo_country") or "")
+                node["entry_city"] = str(meta.get("city") or "")
+                node["entry_is_residential"] = bool(meta.get("is_residential"))
+
+    def _sort_key(self, node: dict[str, Any]):
+        ip = node["ip"]
+        return (
+            int(node.get("ping") or 9999)
+            + int(self._penalties.get(ip, 0))
+            + int(self._soft_penalties.get(ip, 0)),
+            -int(node.get("score") or 0),
+        )
 
     def select(self, country: str, excluded: set[str]) -> dict[str, Any] | None:
         with self._lock:
@@ -292,7 +337,7 @@ class NodePool:
                 for node in self._nodes.values()
                 if (country == "ANY" or node["country"] == country) and node["ip"] not in excluded
             ]
-            candidates.sort(key=lambda node: (node["ping"] + self._penalties.get(node["ip"], 0), -node["score"]))
+            candidates.sort(key=self._sort_key)
             return dict(candidates[0]) if candidates else None
 
     def get(self, ip: str, country: str = "ANY") -> dict[str, Any] | None:
@@ -316,7 +361,7 @@ class NodePool:
                 for node in self._nodes.values()
                 if country == "ANY" or node["country"] == country
             ]
-            candidates.sort(key=lambda node: (node["ping"] + self._penalties.get(node["ip"], 0), -node["score"]))
+            candidates.sort(key=self._sort_key)
             return [{key: value for key, value in node.items() if key != "config"} for node in candidates]
 
 

@@ -85,12 +85,27 @@ def dump_nodes_snapshot() -> None:
     """Persist candidate list (sans config) for the admin API / UI."""
     try:
         rows = []
+        type_counts: dict[str, int] = {}
         for row in node_pool().list_nodes("ANY"):
             ip = str(row.get("ip") or "")
             full = node_pool().get(ip, "ANY") if ip else None
             proto = port = ""
             if full:
                 proto, port = parse_proto_port(full.get("config") or "")
+                # Prefer annotated fields from full node when present.
+                for key in (
+                    "entry_egress_type",
+                    "entry_egress_type_label",
+                    "entry_isp_org",
+                    "entry_geo_country",
+                    "entry_city",
+                    "entry_is_residential",
+                ):
+                    if key in full and key not in row:
+                        row[key] = full[key]
+            et = str(row.get("entry_egress_type") or "")
+            if et:
+                type_counts[et] = type_counts.get(et, 0) + 1
             rows.append(
                 {
                     "ip": ip,
@@ -100,6 +115,14 @@ def dump_nodes_snapshot() -> None:
                     "port": port,
                     "proto": proto,
                     "remote": f"{ip}:{port}" if ip and port else ip,
+                    "entry_egress_type": row.get("entry_egress_type") or "",
+                    "entry_egress_type_label": row.get("entry_egress_type_label") or "",
+                    "entry_isp_org": row.get("entry_isp_org") or "",
+                    "entry_geo_country": row.get("entry_geo_country") or "",
+                    "entry_city": row.get("entry_city") or "",
+                    "entry_is_residential": bool(row.get("entry_is_residential"))
+                    if "entry_is_residential" in row
+                    else None,
                 }
             )
         NODES_STATUS.write_text(
@@ -107,6 +130,7 @@ def dump_nodes_snapshot() -> None:
                 {
                     "updated": int(time.time()),
                     "counts": node_pool().counts(),
+                    "entry_type_counts": type_counts,
                     "nodes": rows,
                 },
                 ensure_ascii=False,
@@ -116,6 +140,36 @@ def dump_nodes_snapshot() -> None:
         )
     except OSError as e:
         stamp(f"dump nodes failed: {e}")
+
+
+def _apply_entry_prefilter(tcp_nodes: list[dict]) -> None:
+    """Batch-classify VPNGate entry IPs and soft-demote datacenter (heuristic)."""
+    from kui.entry_meta import classify_entries, soft_penalty_for
+
+    ips = [str(n.get("ip") or "") for n in tcp_nodes if n.get("ip")]
+    if not ips:
+        return
+    t0 = time.time()
+    try:
+        metas = classify_entries(ips, max_workers=8, timeout=8)
+    except Exception as e:
+        stamp(f"entry prefilter classify failed: {e}")
+        return
+    allow = allow_non_residential()
+    soft = {
+        ip: soft_penalty_for(str((meta or {}).get("egress_type") or "unverified"), allow_non_residential=allow)
+        for ip, meta in metas.items()
+    }
+    pool = node_pool()
+    pool.set_soft_penalties(soft)
+    pool.annotate_entries(metas)
+    from collections import Counter
+
+    types = Counter(str((m or {}).get("egress_type") or "unverified") for m in metas.values())
+    stamp(
+        f"entry prefilter n={len(metas)} types={dict(types)} "
+        f"allow_non_res={int(allow)} elapsed={time.time() - t0:.1f}s"
+    )
 
 
 def refresh_nodes(force: bool = False) -> list[dict]:
@@ -132,6 +186,7 @@ def refresh_nodes(force: bool = False) -> list[dict]:
         if proto.startswith("tcp"):
             tcp_nodes.append(n)
     node_pool().replace(tcp_nodes)
+    _apply_entry_prefilter(tcp_nodes)
     _NODES_AT = time.time()
     stamp(f"node pool refresh n={len(tcp_nodes)} countries={node_pool().counts()}")
     dump_nodes_snapshot()
@@ -258,6 +313,12 @@ def list_candidates(
                 "proto": proto,
                 "remote": key,
                 "config": full.get("config"),
+                "entry_egress_type": full.get("entry_egress_type") or row.get("entry_egress_type") or "",
+                "entry_egress_type_label": full.get("entry_egress_type_label")
+                or row.get("entry_egress_type_label")
+                or "",
+                "entry_isp_org": full.get("entry_isp_org") or row.get("entry_isp_org") or "",
+                "entry_geo_country": full.get("entry_geo_country") or row.get("entry_geo_country") or "",
             }
         )
         if len(out) >= limit:

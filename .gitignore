@@ -38,3 +38,4 @@ AGENTS.project.md
 .project_id
 __pycache__/
 *.pyc
+proxy-bin/entry-ip-meta.json

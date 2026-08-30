@@ -323,16 +323,19 @@ export function listOvpnNodes(country = "ANY") {
   const file = join(BIN, "ovpn-nodes.json");
   let updated = 0;
   let counts: Record<string, number> = {};
+  let entryTypeCounts: Record<string, number> = {};
   let nodes: Array<Record<string, unknown>> = [];
   try {
     if (existsSync(file)) {
       const parsed = JSON.parse(readFileSync(file, "utf8")) as {
         updated?: number;
         counts?: Record<string, number>;
+        entry_type_counts?: Record<string, number>;
         nodes?: Array<Record<string, unknown>>;
       };
       updated = Number(parsed.updated || 0);
       counts = parsed.counts || {};
+      entryTypeCounts = parsed.entry_type_counts || {};
       nodes = parsed.nodes || [];
     }
   } catch {
@@ -343,7 +346,7 @@ export function listOvpnNodes(country = "ANY") {
     cc === "ANY" || cc === "ALL" || cc === ""
       ? nodes
       : nodes.filter((n) => String(n.country || "").toUpperCase() === cc);
-  return { updated, counts, country: cc, nodes: filtered };
+  return { updated, counts, entryTypeCounts, country: cc, nodes: filtered };
 }
 
 export async function probeSlot(kind: SlotKind, id: string) {

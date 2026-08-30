@@ -347,6 +347,10 @@ export function VpnView() {
                           <span className="font-mono text-muted">
                             {n.ip}:{n.port || "?"} · {n.country || "?"} · ping {n.ping ?? "—"} · score{" "}
                             {n.score ?? "—"}
+                            {n.entry_egress_type
+                              ? ` · ${n.entry_egress_type_label || n.entry_egress_type}`
+                              : ""}
+                            {n.entry_isp_org ? ` · ${String(n.entry_isp_org).slice(0, 16)}` : ""}
                           </span>
                           <Button
                             size="sm"
