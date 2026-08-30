@@ -107,15 +107,12 @@ function shortIsp(raw: string | undefined, kind: string | undefined): string {
 }
 
 function egressKindLabel(slot: LiveExit): string {
-  const t = slot.egress_type || "unverified";
-  return (
-    {
-      residential: "住宅",
-      datacenter: "机房",
-      enterprise: "企业",
-      unverified: "未验证",
-    } as Record<string, string>
-  )[t] || "未验证";
+  const t = String(slot.egress_type || "unverified").toLowerCase();
+  if (t === "residential") return "住宅";
+  if (t === "datacenter") return "机房";
+  if (t === "enterprise") return "企业";
+  // unknown / unverified / missing
+  return "未验证";
 }
 
 /**
@@ -357,7 +354,14 @@ export function buildClashYaml(host: string, uuid: string, subPath: string, exit
   const frontNames = fronts.map((n) => n.name);
   const exitNames = outs.map((n) => n.name);
   // kui: residential + unverified go into 🏠 住宅自动; we have no TestISP yet → all exits
-  const pureNames = exitNames;
+  // kui: residential + unverified → 🏠 住宅自动; datacenter stays in ⚡ only
+  const pureNames = outs
+    .filter((n) => {
+      const slot = exits.find((s) => exitLabel(s) === n.name);
+      const t = String(slot?.egress_type || "unverified").toLowerCase();
+      return t === "residential" || t === "unverified" || t === "unknown" || !slot?.egress_type;
+    })
+    .map((n) => n.name);
   const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
 
   const groups: string[] = [

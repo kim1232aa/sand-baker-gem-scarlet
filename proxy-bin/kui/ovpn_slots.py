@@ -805,6 +805,13 @@ def slot_status_extra(slot: dict, slot_dir: Path, remote: str = "") -> dict:
     }
 
 
+def with_egress_meta(row: dict, slot_dir: Path) -> dict:
+    """Attach kui-style egress_type / isp_org (TestISP → ip-api → ippure)."""
+    from kui.egress_meta import attach_meta
+
+    return attach_meta(row, slot_dir, timeout=8)
+
+
 def begin_redial(slot: dict, slot_dir: Path, *, reason: str) -> None:
     """Penalize current entry, bump generation, tear down tunnel (kui health/redial)."""
     entry_ip = ""
@@ -842,16 +849,20 @@ def begin_redial(slot: dict, slot_dir: Path, *, reason: str) -> None:
 def bring_up(slot: dict) -> dict:
     slot_dir = ROOT / slot["id"]
     slot_dir.mkdir(parents=True, exist_ok=True)
+
+    def finish(row: dict) -> dict:
+        return with_egress_meta(row, slot_dir)
+
     if (slot_dir / "DISABLED").exists():
         teardown_tunnel(slot_dir)
-        return {
+        return finish({
             **slot,
             "state": "down",
             "egress_ip": "",
             "kind": "openvpn",
             "disabled": True,
             **slot_status_extra(slot, slot_dir),
-        }
+        })
     force = (slot_dir / "FORCE_REDIAL").exists()
     if force:
         try:
@@ -881,13 +892,13 @@ def bring_up(slot: dict) -> dict:
             set_failures(slot_dir, 0)
             cfg = slot_dir / "client.ovpn"
             remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
-            return {
+            return finish({
                 **slot,
                 "state": "ready",
                 "egress_ip": ip,
                 "kind": "openvpn",
                 **slot_status_extra(slot, slot_dir, remote),
-            }
+            })
         # Probe failed. If openvpn still claims initialized, count health fails then auto-redial.
         if openvpn_initialized(slot_dir):
             hf = health_fails_of(slot_dir) + 1
@@ -896,13 +907,13 @@ def bring_up(slot: dict) -> dict:
             if hf < 2:
                 cfg = slot_dir / "client.ovpn"
                 remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
-                return {
+                return finish({
                     **slot,
                     "state": "boot",
                     "egress_ip": "",
                     "kind": "openvpn",
                     **slot_status_extra(slot, slot_dir, remote),
-                }
+                })
             begin_redial(slot, slot_dir, reason="health-socks")
             force = True
             start_gen = generation_of(slot_dir)
@@ -915,34 +926,34 @@ def bring_up(slot: dict) -> dict:
 
     nspid = make_netns(slot_dir)
     if not nspid:
-        return {
+        return finish({
             **slot,
             "state": "down",
             "egress_ip": "",
             "kind": "openvpn",
             **slot_status_extra(slot, slot_dir),
-        }
+        })
     ensure_slirp(nspid, slot_dir)
     # Always dial fresh when we reached here (healthy path returned earlier).
     teardown_tunnel(slot_dir, drop_cfg=False)
     dial = ensure_openvpn(nspid, slot, slot_dir, start_gen=start_gen)
     if dial.get("disabled"):
-        return {
+        return finish({
             **slot,
             "state": "down",
             "egress_ip": "",
             "kind": "openvpn",
             "disabled": True,
             **slot_status_extra(slot, slot_dir, dial.get("remote") or ""),
-        }
+        })
     if dial.get("stale"):
-        return {
+        return finish({
             **slot,
             "state": "boot",
             "egress_ip": "",
             "kind": "openvpn",
             **slot_status_extra(slot, slot_dir),
-        }
+        })
     ensure_socks(nspid, slot, slot_dir)
     time.sleep(0.5)
     ip = probe(slot["port"], timeout=6)
@@ -955,13 +966,13 @@ def bring_up(slot: dict) -> dict:
         if entry:
             node_pool().penalize(entry, PENALIZE_FAIL)
         teardown_tunnel(slot_dir, drop_cfg=True)
-        return {
+        return finish({
             **slot,
             "state": "boot",
             "egress_ip": "",
             "kind": "openvpn",
             **slot_status_extra(slot, slot_dir),
-        }
+        })
     if ip:
         set_failures(slot_dir, 0)
         set_health_fails(slot_dir, 0)
@@ -972,13 +983,13 @@ def bring_up(slot: dict) -> dict:
         stamp(f"{slot['id']} post-dial socks fail health={hf}")
         if hf >= 2:
             begin_redial(slot, slot_dir, reason="post-dial-socks")
-    return {
+    return finish({
         **slot,
         "state": "ready" if ip else "boot",
         "egress_ip": ip,
         "kind": "openvpn",
         **slot_status_extra(slot, slot_dir, remote),
-    }
+    })
 
 
 def loop() -> None:

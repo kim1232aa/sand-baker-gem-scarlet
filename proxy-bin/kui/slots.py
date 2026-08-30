@@ -194,7 +194,10 @@ def probe_socks(port: int) -> str:
 
 
 def snapshot() -> list[dict]:
+    from kui.egress_meta import attach_meta
+
     def one(slot: dict) -> dict:
+        slot_dir = TOR_ROOT / slot["id"]
         if disabled(slot):
             row = {
                 "id": slot["id"],
@@ -205,10 +208,12 @@ def snapshot() -> list[dict]:
                 "pid": 0,
                 "kind": "tor",
                 "disabled": True,
+                "egress_type": "unverified",
+                "isp_org": "",
             }
             stamp(f"slot {slot['id']} state=down disabled")
             return row
-        pid = read_pid(TOR_ROOT / slot["id"] / "tor.pid")
+        pid = read_pid(slot_dir / "tor.pid")
         ready = pid_alive(pid) and bootstrapped(slot)
         ip = probe_socks(slot["port"]) if ready else ""
         row = {
@@ -220,7 +225,12 @@ def snapshot() -> list[dict]:
             "pid": pid if pid_alive(pid) else 0,
             "kind": "tor",
         }
-        stamp(f"slot {slot['id']} state={row['state']} ip={ip or '-'}")
+        # TestISP/ip-api classify once per egress IP (cached under tor/<id>/EGRESS_META).
+        row = attach_meta(row, slot_dir, timeout=8)
+        stamp(
+            f"slot {slot['id']} state={row['state']} ip={ip or '-'} "
+            f"type={row.get('egress_type') or '-'} isp={row.get('isp_org') or '-'}"
+        )
         return row
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -230,7 +240,7 @@ def snapshot() -> list[dict]:
     for r in rows:
         ip = r.get("egress_ip") or ""
         if ip and ip in seen:
-            out.append({**r, "state": "boot", "egress_ip": ""})
+            out.append({**r, "state": "boot", "egress_ip": "", "egress_type": "unverified", "isp_org": ""})
         else:
             if ip:
                 seen.add(ip)
