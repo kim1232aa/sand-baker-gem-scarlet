@@ -216,16 +216,15 @@ export function ExitsView() {
       <p className="text-xs font-medium tracking-widest text-subtle uppercase">订阅规则</p>
       <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
         {[
-          ["🚀 节点选择", "select · 总入口"],
+          ["🚀 节点选择", "select · 总入口（对齐 kui）"],
+          ["⚡ 自动选择", "url-test · 全部已通出口"],
+          ["🏠 住宅自动", "url-test · 住宅/未验证出口"],
           ["⚡ CF入口", "url-test · Cloudflare 域名优选（出口仍是本机）"],
-          ["🌍 真实出口", "select · Tor + OpenVPN 已通电路"],
-          ["🧅 Tor", "select · Tor 国家出口"],
-          ["🔑 OpenVPN", "select · OpenVPN/VPNGate 出口"],
-          ["🧠 Claude", "anthropic / claude.ai"],
-          ["🤖 ChatGPT", "openai / chatgpt.com"],
-          ["🔵 Google·Gemini", "gemini / aistudio"],
-          ["🇨🇳 中国流量", "GEOSITE,cn + GEOIP,CN → DIRECT"],
+          ["🧠 Claude", "anthropic / claude.ai → 优先住宅"],
+          ["🤖 ChatGPT", "openai / chatgpt.com → 优先住宅"],
+          ["🔵 Google·Gemini", "gemini / aistudio → 优先住宅"],
           ["🌐 其他流量", "MATCH → 节点选择"],
+          ["🇨🇳 中国流量", "GEOSITE/GEOIP CN → DIRECT"],
         ].map(([n, h]) => (
           <li key={n} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm font-medium">{n}</p>

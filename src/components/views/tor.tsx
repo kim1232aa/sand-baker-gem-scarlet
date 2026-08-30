@@ -7,7 +7,7 @@ import { LiveDot, StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { relayFetch } from "@/lib/relays";
 import type { LiveExit } from "@/lib/nodes";
-import { socksPort } from "@/lib/nodes";
+import { exitLabel, socksPort } from "@/lib/nodes";
 
 type StackPayload = {
   torSlots?: LiveExit[];
@@ -179,7 +179,7 @@ export function TorView() {
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                   <LiveDot on={ok} />
-                  Tor·{s.country}
+                  {exitLabel(s)}
                   <span className="font-mono text-xs font-normal text-subtle">{s.id}</span>
                   <Badge variant={ok ? "ok" : "danger"}>{s.state || "down"}</Badge>
                 </p>

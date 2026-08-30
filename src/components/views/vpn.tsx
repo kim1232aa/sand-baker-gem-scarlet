@@ -6,7 +6,7 @@ import { LiveDot, StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { relayFetch } from "@/lib/relays";
 import type { LiveExit, OvpnCandidate } from "@/lib/nodes";
-import { socksPort } from "@/lib/nodes";
+import { exitLabel, socksPort } from "@/lib/nodes";
 
 type StackPayload = {
   ovpnSlots?: LiveExit[];
@@ -262,14 +262,10 @@ export function VpnView() {
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     <LiveDot on={ok} />
-                    OpenVPN·{s.country}
+                    {exitLabel(s)}
                     <span className="font-mono text-xs font-normal text-subtle">{s.id}</span>
                     <Badge variant={ok ? "ok" : "danger"}>{s.disabled ? "disabled" : s.state || "down"}</Badge>
-                    {s.country_fallback ? (
-                      <Badge variant="danger">
-                        回退 {s.fallback_country || "?"} ← {s.target_country || s.country}
-                      </Badge>
-                    ) : null}
+                    {s.country_fallback ? <Badge variant="warn">国家回退</Badge> : null}
                   </p>
                   <p className="mt-1 font-mono text-xs text-muted">
                     SOCKS {port || "—"} · 偏好端口 {String(s.vpn_port || "any")} · IP {s.egress_ip || "—"}

@@ -8,7 +8,7 @@ import { LiveDot } from "@/components/status-badge";
 import { relayFetch } from "@/lib/relays";
 import { SUB_PATH } from "@/lib/subscribe";
 import type { LiveExit } from "@/lib/nodes";
-import { socksPort, readySocksSlots, buildSocksTxt } from "@/lib/nodes";
+import { socksPort, readySocksSlots, buildSocksTxt, exitLabel } from "@/lib/nodes";
 
 export function SocksView() {
   const [slots, setSlots] = useState<LiveExit[]>([]);
@@ -96,12 +96,12 @@ export function SocksView() {
         <ul className="mt-3 space-y-2">
           {ready.map((s) => {
             const port = socksPort(s);
-            const kind = s.kind === "openvpn" ? "OpenVPN" : "Tor";
             return (
               <li key={s.id} className="flex items-center justify-between gap-2 font-mono text-xs">
                 <span className="flex items-center gap-2 text-sm text-fg">
                   <LiveDot on />
-                  {kind}·{s.country} {s.egress_ip || s.id}
+                  {exitLabel(s)}
+                  <span className="text-subtle">{s.egress_ip || ""}</span>
                 </span>
                 <span className="text-muted">127.0.0.1:{port}</span>
               </li>
