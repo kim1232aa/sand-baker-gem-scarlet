@@ -295,14 +295,54 @@ def nsenter(nspid: int, args: list[str], log: Path | None = None) -> subprocess.
     return subprocess.Popen(cmd, env=ENV, stdout=log.open("ab"), stderr=subprocess.STDOUT, start_new_session=True)
 
 
-def probe(port: int) -> str:
+def probe(port: int, timeout: int = 5) -> str:
+    """SOCKS egress probe. Keep timeout short — 24 serial slots must not stall the loop."""
     r = subprocess.run(
-        ["curl", "-fsS", "--max-time", "12", "--socks5-hostname", f"127.0.0.1:{port}", "https://api.ipify.org"],
+        [
+            "curl",
+            "-fsS",
+            "--max-time",
+            str(max(2, int(timeout))),
+            "--socks5-hostname",
+            f"127.0.0.1:{port}",
+            "https://api.ipify.org",
+        ],
         capture_output=True,
         text=True,
     )
     ip = (r.stdout or "").strip()
     return ip if r.returncode == 0 and ip else ""
+
+
+def teardown_tunnel(slot_dir: Path, *, drop_cfg: bool = False) -> None:
+    for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
+        kill_pidfile(slot_dir / name)
+    if drop_cfg:
+        try:
+            (slot_dir / "client.ovpn").unlink()
+        except OSError:
+            pass
+
+
+def openvpn_initialized(slot_dir: Path) -> bool:
+    pid = read_pid(slot_dir / "openvpn.pid")
+    if not pid_alive(pid):
+        return False
+    log = slot_dir / "openvpn.log"
+    if not log.exists():
+        return False
+    try:
+        return "Initialization Sequence Completed" in log.read_text(errors="replace")
+    except OSError:
+        return False
+
+
+def health_fails_of(slot_dir: Path) -> int:
+    return read_int(slot_dir / "HEALTH_FAILS", 0)
+
+
+def set_health_fails(slot_dir: Path, n: int) -> None:
+    write_int(slot_dir / "HEALTH_FAILS", max(0, n))
 
 
 def remote_of(cfg: str) -> str:
@@ -524,15 +564,17 @@ def kill_pidfile(path: Path) -> None:
 
 
 def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path, *, start_gen: int | None = None) -> dict:
-    """Dial OpenVPN inside the netns. Returns meta about last attempt."""
-    pid = read_pid(slot_dir / "openvpn.pid")
-    log = slot_dir / "openvpn.log"
-    if pid_alive(pid) and log.exists() and "Initialization Sequence Completed" in log.read_text(errors="replace"):
-        cfg = slot_dir / "client.ovpn"
-        remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
-        return {"ok": True, "remote": remote, "reused": True}
+    """Dial OpenVPN inside the netns. Returns meta about last attempt.
+
+    Always starts a fresh dial. Callers must not invoke this for healthy SOCKS slots;
+    stale "Initialization Sequence Completed" banners are never treated as success alone.
+    """
     last_meta: dict = {"ok": False, "remote": "", "reused": False}
     preferred = take_preferred_ip(slot_dir)
+    log = slot_dir / "openvpn.log"
+    # Drop any leftover tunnel before first try.
+    kill_pidfile(slot_dir / "openvpn.pid")
+    kill_pidfile(slot_dir / "openvpn-host.pid")
     for _try in range(5):
         if start_gen is not None and generation_of(slot_dir) != start_gen:
             stamp(f"{slot['id']} generation changed during dial, abort")
@@ -763,12 +805,45 @@ def slot_status_extra(slot: dict, slot_dir: Path, remote: str = "") -> dict:
     }
 
 
+def begin_redial(slot: dict, slot_dir: Path, *, reason: str) -> None:
+    """Penalize current entry, bump generation, tear down tunnel (kui health/redial)."""
+    entry_ip = ""
+    remote = ""
+    cfg = slot_dir / "client.ovpn"
+    if cfg.exists():
+        remote = remote_of(cfg.read_text(errors="replace"))
+        entry_ip = remote.split(":", 1)[0] if remote else ""
+        try:
+            cfg.unlink()
+        except OSError:
+            pass
+    mark = slot_dir / "REDIAL_ENTRY"
+    if mark.exists():
+        try:
+            entry_ip = entry_ip or mark.read_text(errors="replace").strip().split()[0]
+        except OSError:
+            pass
+        try:
+            mark.unlink()
+        except OSError:
+            pass
+    if entry_ip:
+        node_pool().penalize(entry_ip, PENALIZE_REDIAL)
+        if remote:
+            remember_skip(slot_dir, remote)
+        else:
+            remember_skip(slot_dir, entry_ip)
+    bump_generation(slot_dir)
+    set_health_fails(slot_dir, 0)
+    teardown_tunnel(slot_dir, drop_cfg=False)
+    stamp(f"{slot['id']} auto-redial gen={generation_of(slot_dir)} reason={reason} penalize={entry_ip or '-'}")
+
+
 def bring_up(slot: dict) -> dict:
     slot_dir = ROOT / slot["id"]
     slot_dir.mkdir(parents=True, exist_ok=True)
     if (slot_dir / "DISABLED").exists():
-        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
-            kill_pidfile(slot_dir / name)
+        teardown_tunnel(slot_dir)
         return {
             **slot,
             "state": "down",
@@ -783,64 +858,61 @@ def bring_up(slot: dict) -> dict:
             (slot_dir / "FORCE_REDIAL").unlink()
         except OSError:
             pass
-        # kui redial_slot: penalize current entry IP then stop/start.
-        entry_ip = ""
-        remote = ""
-        cfg = slot_dir / "client.ovpn"
-        if cfg.exists():
-            remote = remote_of(cfg.read_text(errors="replace"))
-            entry_ip = remote.split(":", 1)[0] if remote else ""
-            try:
-                cfg.unlink()
-            except OSError:
-                pass
-        mark = slot_dir / "REDIAL_ENTRY"
-        if mark.exists():
-            try:
-                entry_ip = entry_ip or mark.read_text(errors="replace").strip().split()[0]
-            except OSError:
-                pass
-            try:
-                mark.unlink()
-            except OSError:
-                pass
-        if entry_ip:
-            node_pool().penalize(entry_ip, PENALIZE_REDIAL)
-            if remote:
-                remember_skip(slot_dir, remote)
-            elif ":" not in entry_ip:
-                remember_skip(slot_dir, entry_ip)
-        bump_generation(slot_dir)
-        # Soft refresh only — batch redial must not refetch VPNGate per slot.
+        begin_redial(slot, slot_dir, reason="force")
         try:
             refresh_nodes(force=False)
         except Exception as e:
             stamp(f"{slot['id']} node refresh on redial: {e}")
-        # Tear down datapath so probe cannot short-circuit on stale SOCKS.
-        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
-            kill_pidfile(slot_dir / name)
-        stamp(f"{slot['id']} force redial gen={generation_of(slot_dir)} penalize={entry_ip or '-'}")
     # Manual connect preferred IP keeps generation bump if CONNECT present without FORCE.
     if (slot_dir / "CONNECT").exists() and not force:
         bump_generation(slot_dir)
-        for name in ("openvpn.pid", "openvpn-host.pid", "fwd.pid", "ns-socks.pid"):
-            kill_pidfile(slot_dir / name)
+        teardown_tunnel(slot_dir)
         stamp(f"{slot['id']} manual connect pending")
         force = True
     if slot["id"] == "ovpn-jp":
         adopt_legacy_jp()
     start_gen = generation_of(slot_dir)
-    ip = "" if force else probe(slot["port"])
-    if ip:
-        cfg = slot_dir / "client.ovpn"
-        remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
-        return {
-            **slot,
-            "state": "ready",
-            "egress_ip": ip,
-            "kind": "openvpn",
-            **slot_status_extra(slot, slot_dir, remote),
-        }
+
+    # Fast health path: if SOCKS still works, keep publishing ready (kui health ok).
+    if not force:
+        ip = probe(slot["port"], timeout=4)
+        if ip:
+            set_health_fails(slot_dir, 0)
+            set_failures(slot_dir, 0)
+            cfg = slot_dir / "client.ovpn"
+            remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+            return {
+                **slot,
+                "state": "ready",
+                "egress_ip": ip,
+                "kind": "openvpn",
+                **slot_status_extra(slot, slot_dir, remote),
+            }
+        # Probe failed. If openvpn still claims initialized, count health fails then auto-redial.
+        if openvpn_initialized(slot_dir):
+            hf = health_fails_of(slot_dir) + 1
+            set_health_fails(slot_dir, hf)
+            stamp(f"{slot['id']} health-fail {hf}/2 (socks dead, openvpn still up)")
+            if hf < 2:
+                cfg = slot_dir / "client.ovpn"
+                remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+                return {
+                    **slot,
+                    "state": "boot",
+                    "egress_ip": "",
+                    "kind": "openvpn",
+                    **slot_status_extra(slot, slot_dir, remote),
+                }
+            begin_redial(slot, slot_dir, reason="health-socks")
+            force = True
+            start_gen = generation_of(slot_dir)
+        else:
+            # Process gone / never initialized — tear residual and redial.
+            if read_pid(slot_dir / "openvpn.pid") or (slot_dir / "client.ovpn").exists():
+                begin_redial(slot, slot_dir, reason="openvpn-dead")
+                force = True
+                start_gen = generation_of(slot_dir)
+
     nspid = make_netns(slot_dir)
     if not nspid:
         return {
@@ -851,6 +923,8 @@ def bring_up(slot: dict) -> dict:
             **slot_status_extra(slot, slot_dir),
         }
     ensure_slirp(nspid, slot_dir)
+    # Always dial fresh when we reached here (healthy path returned earlier).
+    teardown_tunnel(slot_dir, drop_cfg=False)
     dial = ensure_openvpn(nspid, slot, slot_dir, start_gen=start_gen)
     if dial.get("disabled"):
         return {
@@ -871,7 +945,7 @@ def bring_up(slot: dict) -> dict:
         }
     ensure_socks(nspid, slot, slot_dir)
     time.sleep(0.5)
-    ip = probe(slot["port"])
+    ip = probe(slot["port"], timeout=6)
     cfg = slot_dir / "client.ovpn"
     remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else dial.get("remote") or ""
     if ip and ip in ready_ips():
@@ -880,12 +954,7 @@ def bring_up(slot: dict) -> dict:
         entry = remote.split(":", 1)[0] if remote else ""
         if entry:
             node_pool().penalize(entry, PENALIZE_FAIL)
-        try:
-            cfg.unlink()
-        except OSError:
-            pass
-        kill_pidfile(slot_dir / "openvpn.pid")
-        kill_pidfile(slot_dir / "openvpn-host.pid")
+        teardown_tunnel(slot_dir, drop_cfg=True)
         return {
             **slot,
             "state": "boot",
@@ -895,6 +964,14 @@ def bring_up(slot: dict) -> dict:
         }
     if ip:
         set_failures(slot_dir, 0)
+        set_health_fails(slot_dir, 0)
+    elif dial.get("ok"):
+        # OpenVPN said ready but SOCKS still dead — count as health fail and retry next loop.
+        hf = health_fails_of(slot_dir) + 1
+        set_health_fails(slot_dir, hf)
+        stamp(f"{slot['id']} post-dial socks fail health={hf}")
+        if hf >= 2:
+            begin_redial(slot, slot_dir, reason="post-dial-socks")
     return {
         **slot,
         "state": "ready" if ip else "boot",
@@ -959,7 +1036,9 @@ def loop() -> None:
             STATUS.write_text(
                 json.dumps({"updated": int(time.time()), "slots": partial}, ensure_ascii=False, indent=2) + "\n"
             )
-        time.sleep(20)
+        # Faster loop when many slots are still booting / recovering.
+        bootish = sum(1 for r in rows if r.get("state") != "ready" and not r.get("disabled"))
+        time.sleep(8 if bootish else 20)
 
 
 if __name__ == "__main__":
