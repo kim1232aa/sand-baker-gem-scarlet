@@ -511,6 +511,10 @@ def select_node(
 
     prefer_dc_entry = bool(slot.get("allow_datacenter"))
 
+    def _is_softether(ip: str) -> bool:
+        # VPNGate relay farm; almost never completes a useful residential egress dial.
+        return ip.startswith("219.100.37.")
+
     def _select(cc: str, *, require_want: bool) -> dict | None:
         # Walk NodePool order (already ping+penalty sorted) instead of refetching.
         # Datacenter-quota slots: annotated DC entries first, but keep pool order
@@ -519,10 +523,17 @@ def select_node(
         if prefer_dc_entry:
             dc_rows = [r for r in rows if str(r.get("entry_egress_type") or "").lower() == "datacenter"]
             other_rows = [r for r in rows if str(r.get("entry_egress_type") or "").lower() != "datacenter"]
+            # SoftEther last even inside DC prefer — they dial-fail constantly.
+            dc_rows = [r for r in dc_rows if not _is_softether(str(r.get("ip") or ""))] + [
+                r for r in dc_rows if _is_softether(str(r.get("ip") or ""))
+            ]
             rows = dc_rows + other_rows
         for row in rows:
             ip = str(row.get("ip") or "")
             if not ip or ip in excluded_ips:
+                continue
+            # Residential slots: never burn dial budget on SoftEther 443 farm.
+            if not prefer_dc_entry and _is_softether(ip):
                 continue
             full = node_pool().get(ip, cc if cc != "ANY" else "ANY") or node_pool().get(ip, "ANY")
             if require_want:
@@ -815,12 +826,23 @@ def ensure_socks(nspid: int, slot: dict, slot_dir: Path) -> None:
 
 
 def heal_socks(slot: dict, slot_dir: Path) -> str:
-    """Restart host-fwd/ns-socks while OpenVPN stays up. Returns probe IP or ""."""
-    nspid = make_netns(slot_dir)
-    if not nspid:
+    """Kill+restart host-fwd/ns-socks while OpenVPN stays up. Returns probe IP or ""."""
+    nspid = read_pid(slot_dir / "ns.pid")
+    if not pid_alive(nspid):
+        # Do not create a fresh netns under a still-running OpenVPN in the old ns.
         return ""
+    # Zombie bridges often keep PIDs alive while unix/tun is wedged — always recreate.
+    kill_pidfile(slot_dir / "fwd.pid")
+    kill_pidfile(slot_dir / "ns-socks.pid")
+    unix = BIN / "socks" / f"{slot['id']}.unix"
+    try:
+        if unix.exists() or unix.is_symlink():
+            unix.unlink()
+    except OSError:
+        pass
+    time.sleep(0.2)
     ensure_socks(nspid, slot, slot_dir)
-    time.sleep(0.4)
+    time.sleep(0.5)
     return probe(slot["port"], timeout=4)
 
 
@@ -1173,15 +1195,13 @@ def bring_up(slot: dict) -> dict:
     # Fast health path: if SOCKS still works, re-validate gates then publish ready.
     if not force:
         ip = probe(slot["port"], timeout=4)
-        # OpenVPN up but host-fwd/ns-socks dead → heal bridge first; don't burn the tunnel.
+        # OpenVPN up but SOCKS probe failed → always recreate bridge first.
+        # Zombie fwd/ns-socks often keep PIDs alive; don't burn the tunnel yet.
         if not ip and openvpn_initialized(slot_dir):
-            fwd_alive = pid_alive(read_pid(slot_dir / "fwd.pid"))
-            ns_alive = pid_alive(read_pid(slot_dir / "ns-socks.pid"))
-            if not (fwd_alive and ns_alive):
-                stamp(f"{slot['id']} socks bridge dead (fwd={int(fwd_alive)} ns={int(ns_alive)}), heal")
-                ip = heal_socks(slot, slot_dir)
-                if ip:
-                    stamp(f"{slot['id']} socks healed ip={ip}")
+            stamp(f"{slot['id']} socks probe miss while openvpn up, heal bridge")
+            ip = heal_socks(slot, slot_dir)
+            if ip:
+                stamp(f"{slot['id']} socks healed ip={ip}")
         if ip:
             set_health_fails(slot_dir, 0)
             set_failures(slot_dir, 0)
