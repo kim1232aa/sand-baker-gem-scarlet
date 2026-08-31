@@ -605,6 +605,27 @@ def probe_204(interface: str, run: Callable[..., Any] = subprocess.run) -> bool:
     return getattr(result, "returncode", -1) == 0 and _probe_accepts(url, code)
 
 
+def probe_204_socks(
+    socks_host: str,
+    socks_port: int,
+    *,
+    timeout: int = 8,
+    run: Callable[..., Any] = subprocess.run,
+) -> bool:
+    """kui health-loop equivalent: gstatic generate_204 via local SOCKS."""
+    url = DEFAULT_STREAM_URL
+    command = [
+        "curl", "-o", "/dev/null", "-s", "-w", "%{http_code}",
+        "-A", "Mozilla/5.0", "-m", str(max(2, int(timeout))),
+        "--location", "--max-redirs", "20",
+        "--socks5-hostname", f"{socks_host}:{int(socks_port)}",
+        url,
+    ]
+    result = run(command, capture_output=True, text=True, check=False)
+    code = (getattr(result, "stdout", "") or "").strip()
+    return getattr(result, "returncode", -1) == 0 and _probe_accepts(url, code)
+
+
 def _probe_accepts(url: str, code: str) -> bool:
     if not re.fullmatch(r"[0-9]{3}", code) or code == "000":
         return False

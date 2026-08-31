@@ -6,7 +6,9 @@ import json
 import os
 import signal
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 
@@ -18,6 +20,9 @@ LOG = BIN / "ovpn-slots.log"
 PID_FILE = BIN / "ovpn-slots.pid"
 ENV = {**os.environ, "LD_LIBRARY_PATH": str(NAT / "lib"), "PYTHONPATH": str(BIN)}
 UUID = (BIN / "uuid").read_text().strip() if (BIN / "uuid").exists() else "a3f1c8e2-9b47-4d6a-8e21-c5f90b3d7a14"
+_SELECTION_LOCK = threading.RLock()
+_STATUS_LOCK = threading.RLock()
+_SKIP_LOCK = threading.Lock()
 
 # vpn_port is a preference; pick_profile falls back to any TCP if that port is empty.
 # Prefer JP/KR (VPNGate TCP 多); TH 常只有 UDP、RO 常空，保留少量试探槽。
@@ -83,6 +88,12 @@ _SKIP: set[str] = set()
 _POOL = None  # kui.vpngate.NodePool
 MAX_FAILURES = 3
 COUNTRY_FALLBACK_AFTER = 2
+# Bounded concurrent dials (kui exit_manager dial_workers). Default 10.
+try:
+    DIAL_WORKERS = int(os.environ.get("OVPN_DIAL_WORKERS", "10"))
+except ValueError:
+    DIAL_WORKERS = 10
+DIAL_WORKERS = max(1, min(len(PLAN), DIAL_WORKERS))
 PENALIZE_REDIAL = 3000
 PENALIZE_FAIL = 10000
 PENALIZE_TIMEOUT = 5000
@@ -269,7 +280,8 @@ def remember_skip(slot_dir: Path, remote: str, keep: int = 12) -> None:
     """Record remote so this slot won't reselect it soon. Callers penalize NodePool separately."""
     if not remote:
         return
-    _SKIP.add(remote)
+    with _SKIP_LOCK:
+        _SKIP.add(remote)
     prev = [r for r in load_slot_skips(slot_dir) if r != remote]
     prev.append(remote)
     slot_dir.mkdir(parents=True, exist_ok=True)
@@ -389,7 +401,7 @@ def nsenter(nspid: int, args: list[str], log: Path | None = None) -> subprocess.
 
 
 def probe(port: int, timeout: int = 5) -> str:
-    """SOCKS egress probe. Keep timeout short — 24 serial slots must not stall the loop."""
+    """SOCKS egress IP probe (publish / heal path). Keep timeout short under parallel dials."""
     r = subprocess.run(
         [
             "curl",
@@ -405,6 +417,13 @@ def probe(port: int, timeout: int = 5) -> str:
     )
     ip = (r.stdout or "").strip()
     return ip if r.returncode == 0 and ip else ""
+
+
+def health_alive(port: int, timeout: int = 8) -> bool:
+    """kui-style recurring health: gstatic 204 via SOCKS (not full STREAM_URLS)."""
+    from kui.vpngate import probe_204_socks
+
+    return probe_204_socks("127.0.0.1", int(port), timeout=timeout)
 
 
 def teardown_tunnel(slot_dir: Path, *, drop_cfg: bool = False) -> None:
@@ -447,7 +466,8 @@ def remote_of(cfg: str) -> str:
 
 
 def used_remotes() -> set[str]:
-    used = set(_SKIP)
+    with _SKIP_LOCK:
+        used = set(_SKIP)
     for d in ROOT.iterdir() if ROOT.exists() else []:
         p = d / "client.ovpn"
         if p.exists():
@@ -474,6 +494,31 @@ def country_fallback_allowed(slot_dir: Path, country: str) -> bool:
     return country not in {"", "ANY"} and failures_of(slot_dir) >= COUNTRY_FALLBACK_AFTER
 
 
+def clear_country_fallback(slot_dir: Path) -> None:
+    try:
+        (slot_dir / "COUNTRY_FALLBACK").unlink()
+    except OSError:
+        pass
+
+
+def reconcile_fallback_marker(slot: dict, slot_dir: Path, remote: str) -> None:
+    """Drop sticky COUNTRY_FALLBACK when current entry is actually the target country."""
+    fb = slot_dir / "COUNTRY_FALLBACK"
+    if not fb.exists():
+        return
+    target = str(slot.get("country") or "").upper()
+    if target in {"", "ANY", "XX"}:
+        return
+    entry = remote.split(":", 1)[0] if remote else ""
+    if not entry:
+        return
+    node = node_pool().get(entry, "ANY")
+    entry_cc = str((node or {}).get("country") or "").upper()
+    if entry_cc == target:
+        clear_country_fallback(slot_dir)
+        stamp(f"{slot['id']} clear stale country_fallback (entry {entry} is {entry_cc})")
+
+
 def select_node(
     slot: dict,
     slot_dir: Path,
@@ -489,10 +534,11 @@ def select_node(
         allow_fallback = country_fallback_allowed(slot_dir, country)
 
     # Exclude other slots' entry IPs + this slot's recent SKIP remotes.
+    with _SKIP_LOCK:
+        skip_snapshot = set(_SKIP)
     excluded_ips = active_entry_ips(excluding=slot["id"]) | {r.split(":", 1)[0] for r in load_slot_skips(slot_dir)}
     excluded_ips |= {r.split(":", 1)[0] for r in used_remotes() if ":" in r or r}
-    # Soft process-level skips
-    excluded_ips |= {r.split(":", 1)[0] for r in _SKIP}
+    excluded_ips |= {r.split(":", 1)[0] for r in skip_snapshot}
 
     def _tcp_ok(node: dict | None) -> dict | None:
         if not node:
@@ -515,10 +561,11 @@ def select_node(
         # VPNGate relay farm; almost never completes a useful residential egress dial.
         return ip.startswith("219.100.37.")
 
-    def _select(cc: str, *, require_want: bool) -> dict | None:
+    def _select(cc: str, *, require_want: bool, excluded_countries: set[str] | None = None) -> dict | None:
         # Walk NodePool order (already ping+penalty sorted) instead of refetching.
         # Datacenter-quota slots: annotated DC entries first, but keep pool order
         # within each group so dial/soft penalties still sink bad SoftEther hosts.
+        excluded_countries = excluded_countries or set()
         rows = node_pool().list_nodes(cc if cc != "ANY" else "ANY")
         if prefer_dc_entry:
             dc_rows = [r for r in rows if str(r.get("entry_egress_type") or "").lower() == "datacenter"]
@@ -530,7 +577,10 @@ def select_node(
             rows = dc_rows + other_rows
         for row in rows:
             ip = str(row.get("ip") or "")
+            row_cc = str(row.get("country") or "")
             if not ip or ip in excluded_ips:
+                continue
+            if row_cc in excluded_countries:
                 continue
             # Residential slots: never burn dial budget on SoftEther 443 farm.
             if not prefer_dc_entry and _is_softether(ip):
@@ -543,6 +593,9 @@ def select_node(
             if full:
                 return full
         return None
+
+    def _pick_other_country() -> dict | None:
+        return _select("ANY", require_want=False, excluded_countries={country})
 
     node = None
     fallback = False
@@ -558,33 +611,36 @@ def select_node(
         if node is None:
             stamp(f"{slot['id']} preferred {preferred_ip} unavailable, auto select")
 
-    if node is None:
+    # True scarcity = VPNGate snapshot has zero rows for this CC (not "all excluded").
+    # Parallel dials + SKIP can exhaust usable JP/KR without the country being scarce.
+    pool_counts = node_pool().counts()
+    target_pool_empty = country != "ANY" and int(pool_counts.get(country, 0) or 0) == 0
+
+    if node is None and country != "ANY" and allow_fallback:
+        # kui streak path: after failures, try other countries BEFORE target.
+        alt = _pick_other_country()
+        if alt:
+            node = alt
+            fallback = True
+            stamp(f"{slot['id']} country_fallback after-failures -> {alt.get('country')}")
+        else:
+            node = _select(country, require_want=bool(want))
+            if node is None and want:
+                stamp(f"{slot['id']} no tcp/{want} for {country}, fallback any tcp")
+                node = _select(country, require_want=False)
+
+    elif node is None:
         node = _select(country, require_want=bool(want))
         if node is None and want:
             stamp(f"{slot['id']} no tcp/{want} for {country}, fallback any tcp")
             node = _select(country, require_want=False)
-        # kui: empty target pool always may cross-country; else after failure streak.
-        if node is None and country != "ANY":
-            # Prefer other countries first (kui excludes target country).
-            # Cross-country only when streak allows OR target country truly empty.
-            target_empty = _select(country, require_want=False) is None
-            if allow_fallback or target_empty:
-                alt = None
-                for row in node_pool().list_nodes("ANY"):
-                    ip = str(row.get("ip") or "")
-                    if not ip or ip in excluded_ips or row.get("country") == country:
-                        continue
-                    full = _tcp_ok(node_pool().get(ip, "ANY"))
-                    if full:
-                        alt = full
-                        break
-                if alt:
-                    node = alt
-                    fallback = True
-                    stamp(
-                        f"{slot['id']} country_fallback "
-                        f"{'empty-pool' if target_empty else 'after-failures'} -> {alt.get('country')}"
-                    )
+        # Scarce-country only: cross-country when the pool truly has no target CC rows.
+        if node is None and target_pool_empty:
+            alt = _pick_other_country()
+            if alt:
+                node = alt
+                fallback = True
+                stamp(f"{slot['id']} country_fallback empty-pool -> {alt.get('country')}")
 
     if node is None:
         # Force refresh once then retry without soft skips / without slot skip history.
@@ -593,9 +649,11 @@ def select_node(
         node = node_pool().select(country, excluded_ips)
         node = _tcp_ok(node)
         if node is None and country != "ANY":
-            node = _tcp_ok(node_pool().select("ANY", excluded_ips))
-            if node and node.get("country") != country:
-                fallback = True
+            # Only cross-country on refresh retry when scarce or streak already allows.
+            if target_pool_empty or allow_fallback:
+                node = _tcp_ok(node_pool().select("ANY", excluded_ips))
+                if node and node.get("country") != country:
+                    fallback = True
 
     if not node:
         raise RuntimeError(f"no tcp VPNGate for {country} (want={want or 'any'}); distribution={node_pool().counts()}")
@@ -695,13 +753,15 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path, *, start_gen: int | N
             return last_meta
         cfg = slot_dir / "client.ovpn"
         try:
-            # Only consume preferred IP on the first attempt of this dial cycle.
-            meta = select_node(
-                slot,
-                slot_dir,
-                preferred_ip=preferred if _try == 0 else "",
-            )
-            cfg.write_text(meta["config"])
+            # Serialize picks so parallel dials don't collide on the same entry IP.
+            with _SELECTION_LOCK:
+                meta = select_node(
+                    slot,
+                    slot_dir,
+                    preferred_ip=preferred if _try == 0 else "",
+                )
+                # Reserve immediately by writing cfg under the same lock window as pick.
+                cfg.write_text(meta["config"])
         except RuntimeError as e:
             stamp(f"{slot['id']} {e}")
             last_meta["error"] = str(e)
@@ -774,10 +834,7 @@ def ensure_openvpn(nspid: int, slot: dict, slot_dir: Path, *, start_gen: int | N
                     f"{meta.get('country')}|{meta.get('target_country')}\n"
                 )
             else:
-                try:
-                    (slot_dir / "COUNTRY_FALLBACK").unlink()
-                except OSError:
-                    pass
+                clear_country_fallback(slot_dir)
             return last_meta
         # Timeout or auth fail: penalize + remember remote and try next candidate.
         amount = PENALIZE_TIMEOUT if timed_out else PENALIZE_FAIL
@@ -912,8 +969,11 @@ def candidate_count(slot: dict, slot_dir: Path) -> int:
     n = len(list_candidates(slot["country"], want, excluded))
     if n == 0 and want:
         n = len(list_candidates(slot["country"], "", excluded))
-    if n == 0 and country_fallback_allowed(slot_dir, slot["country"]):
-        n = len(list_candidates("ANY", "", excluded))
+    # Match select_node scarce/streak policy: only then count ANY pool.
+    if n == 0 and slot["country"] not in {"", "ANY"}:
+        pool_empty = int(node_pool().counts().get(slot["country"], 0) or 0) == 0
+        if pool_empty or country_fallback_allowed(slot_dir, slot["country"]):
+            n = len(list_candidates("ANY", "", excluded))
     return n
 
 
@@ -1192,26 +1252,40 @@ def bring_up(slot: dict) -> dict:
         adopt_legacy_jp()
     start_gen = generation_of(slot_dir)
 
-    # Fast health path: if SOCKS still works, re-validate gates then publish ready.
+    # Fast health path: kui uses probe_204 for recurring health; publish still uses full targets.
     if not force:
-        ip = probe(slot["port"], timeout=4)
-        # OpenVPN up but SOCKS probe failed → always recreate bridge first.
-        # Zombie fwd/ns-socks often keep PIDs alive; don't burn the tunnel yet.
-        if not ip and openvpn_initialized(slot_dir):
-            stamp(f"{slot['id']} socks probe miss while openvpn up, heal bridge")
-            ip = heal_socks(slot, slot_dir)
-            if ip:
-                stamp(f"{slot['id']} socks healed ip={ip}")
-        if ip:
+        alive = health_alive(slot["port"], timeout=6)
+        # OpenVPN up but 204 failed → recreate bridge first (zombie fwd/ns-socks).
+        if not alive and openvpn_initialized(slot_dir):
+            stamp(f"{slot['id']} health-204 miss while openvpn up, heal bridge")
+            healed_ip = heal_socks(slot, slot_dir)
+            alive = bool(healed_ip) or health_alive(slot["port"], timeout=6)
+            if alive:
+                stamp(f"{slot['id']} socks healed health-204 ok")
+        if alive:
+            # Need egress IP for publish / cache key (ipify is fine here; 204 already passed).
+            ip = probe(slot["port"], timeout=4)
+            if not ip:
+                # Rare: 204 ok but ipify flake — treat as soft health miss, don't burn tunnel.
+                stamp(f"{slot['id']} health-204 ok but ipify empty")
+                cfg = slot_dir / "client.ovpn"
+                remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+                return finish({
+                    **slot,
+                    "state": "boot",
+                    "egress_ip": "",
+                    "kind": "openvpn",
+                    **slot_status_extra(slot, slot_dir, remote),
+                })
             set_health_fails(slot_dir, 0)
             set_failures(slot_dir, 0)
             cfg = slot_dir / "client.ovpn"
             remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
+            reconcile_fallback_marker(slot, slot_dir, remote)
             # Reuse cached CHECK_RESULT when same IP already gated this generation.
             cached = load_check_result(slot_dir)
             cached_ip = ""
             if isinstance(cached.get("residential"), dict):
-                # Prefer EGRESS_META ip
                 from kui.egress_meta import load_meta
 
                 meta_cached = load_meta(slot_dir) or {}
@@ -1242,11 +1316,11 @@ def bring_up(slot: dict) -> dict:
                     **slot_status_extra(slot, slot_dir, remote),
                 })
             return finish(publish_ready(slot, slot_dir, ip, remote))
-        # Probe failed. If openvpn still claims initialized, count health fails then auto-redial.
+        # Health failed. If openvpn still claims initialized, count health fails then auto-redial.
         if openvpn_initialized(slot_dir):
             hf = health_fails_of(slot_dir) + 1
             set_health_fails(slot_dir, hf)
-            stamp(f"{slot['id']} health-fail {hf}/2 (socks dead, openvpn still up)")
+            stamp(f"{slot['id']} health-fail {hf}/2 (204 dead, openvpn still up)")
             if hf < 2:
                 cfg = slot_dir / "client.ovpn"
                 remote = remote_of(cfg.read_text(errors="replace")) if cfg.exists() else ""
@@ -1257,7 +1331,7 @@ def bring_up(slot: dict) -> dict:
                     "kind": "openvpn",
                     **slot_status_extra(slot, slot_dir, remote),
                 })
-            begin_redial(slot, slot_dir, reason="health-socks")
+            begin_redial(slot, slot_dir, reason="health-204")
             force = True
             start_gen = generation_of(slot_dir)
         else:
@@ -1336,11 +1410,32 @@ def bring_up(slot: dict) -> dict:
     })
 
 
+def _write_status(rows: list[dict], prev_by_id: dict[str, dict] | None = None) -> None:
+    """Atomic-ish status publish; safe under parallel dial workers."""
+    prev_by_id = prev_by_id or {}
+    done = {r["id"] for r in rows if r.get("id")}
+    partial = list(rows)
+    for s in PLAN:
+        if s["id"] in done:
+            continue
+        old = prev_by_id.get(s["id"])
+        if old:
+            partial.append(old)
+        else:
+            partial.append({**s, "state": "boot", "egress_ip": "", "kind": "openvpn", "remote": "", "candidates": 0})
+    # Keep PLAN order for stable UI.
+    by_id = {r["id"]: r for r in partial if r.get("id")}
+    ordered = [by_id[s["id"]] for s in PLAN if s["id"] in by_id]
+    payload = json.dumps({"updated": int(time.time()), "slots": ordered}, ensure_ascii=False, indent=2) + "\n"
+    with _STATUS_LOCK:
+        STATUS.write_text(payload)
+
+
 def loop() -> None:
     PID_FILE.write_text(str(os.getpid()) + "\n")
     ROOT.mkdir(parents=True, exist_ok=True)
     (BIN / "socks").mkdir(exist_ok=True)
-    stamp("ovpn slots start")
+    stamp(f"ovpn slots start dial_workers={DIAL_WORKERS}")
     # Manager restart must not inherit half-consumed HEALTH_FAILS → instant 2/2 redial storm.
     cleared = 0
     for slot in PLAN:
@@ -1350,6 +1445,10 @@ def loop() -> None:
         if health_fails_of(sd) > 0:
             set_health_fails(sd, 0)
             cleared += 1
+        # Drop sticky COUNTRY_FALLBACK markers that no longer match the live entry.
+        cfg = sd / "client.ovpn"
+        if cfg.exists():
+            reconcile_fallback_marker(slot, sd, remote_of(cfg.read_text(errors="replace")))
     if cleared:
         stamp(f"cleared HEALTH_FAILS on {cleared} slots after restart")
     try:
@@ -1365,9 +1464,6 @@ def loop() -> None:
     if sync_xray(PLAN):
         stamp("xray.json ovpn inbounds added")
     while True:
-        rows: list[dict] = []
-        seen: set[str] = set()
-        # Seed with previous status so UI keeps showing later slots while we work front ones.
         prev_by_id: dict[str, dict] = {}
         if STATUS.exists():
             try:
@@ -1376,33 +1472,36 @@ def loop() -> None:
                         prev_by_id[s["id"]] = s
             except Exception:
                 prev_by_id = {}
-        for slot in PLAN:
+
+        rows_by_id: dict[str, dict] = {}
+        seen: set[str] = set()
+        seen_lock = threading.Lock()
+
+        def one(slot: dict) -> dict:
             try:
                 row = bring_up(slot)
             except Exception as e:
                 stamp(f"{slot['id']} error {e}")
                 row = {**slot, "state": "down", "egress_ip": "", "kind": "openvpn", "remote": "", "candidates": 0}
             if row.get("state") == "ready" and row.get("egress_ip"):
-                if row["egress_ip"] in seen:
-                    row = {**row, "state": "boot", "egress_ip": "", "remote": row.get("remote") or ""}
-                else:
-                    seen.add(row["egress_ip"])
-            rows.append(row)
-            # Publish partial progress: processed rows + untouched previous/planned stubs.
-            done = {r["id"] for r in rows}
-            partial = list(rows)
-            for s in PLAN:
-                if s["id"] in done:
-                    continue
-                old = prev_by_id.get(s["id"])
-                if old:
-                    partial.append(old)
-                else:
-                    partial.append({**s, "state": "boot", "egress_ip": "", "kind": "openvpn", "remote": "", "candidates": 0})
-            STATUS.write_text(
-                json.dumps({"updated": int(time.time()), "slots": partial}, ensure_ascii=False, indent=2) + "\n"
-            )
-        # Faster loop when many slots are still booting / recovering.
+                with seen_lock:
+                    if row["egress_ip"] in seen:
+                        row = {**row, "state": "boot", "egress_ip": "", "remote": row.get("remote") or ""}
+                    else:
+                        seen.add(row["egress_ip"])
+            with _STATUS_LOCK:
+                rows_by_id[slot["id"]] = row
+                snapshot = list(rows_by_id.values())
+            _write_status(snapshot, prev_by_id)
+            return row
+
+        workers = max(1, min(DIAL_WORKERS, len(PLAN)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(one, slot) for slot in PLAN]
+            rows = [f.result() for f in futures]
+
+        # Final ordered publish for this cycle.
+        _write_status(rows, prev_by_id)
         bootish = sum(1 for r in rows if r.get("state") != "ready" and not r.get("disabled"))
         time.sleep(8 if bootish else 20)
 
