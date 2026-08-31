@@ -334,28 +334,28 @@ export function buildSocksClashYaml(exits: LiveExit[]): string {
   ].join("\n");
 }
 
-/** CF domain fronts (SNI/Host). Probed 2026-08-31: DNS+TLS-ok only; dead hosts dropped. */
+/**
+ * CF domain fronts (client connects to these IPs; SNI/Host still = tunnel hostname).
+ * Display: CF优选·完整域名. Ordered by VPS-side tunnel RTT (2026-08-31); 403/unreachable dropped.
+ */
 export const CF_FRONTS: { server: string; name: string }[] = [
-  { server: "bestcf.030101.xyz", name: "CF优选·bestcf" },
-  { server: "cf.090227.xyz", name: "CF优选·090227" },
-  { server: "saas.sin.fan", name: "CF优选·MIYU" },
-  { server: "cdn.2020111.xyz", name: "CF优选·2020111" },
-  { server: "cdns.doon.eu.org", name: "CF优选·doon" },
-  { server: "cf.0sm.com", name: "CF优选·0sm" },
-  { server: "cf.877774.xyz", name: "CF优选·877774" },
-  { server: "cfip.1323123.xyz", name: "CF优选·1323123" },
-  { server: "cfip.xxxxxxxx.tk", name: "CF优选·xxxxxxxx" },
-  { server: "cloudflare-ip.mofashi.ltd", name: "CF优选·mofashi" },
-  { server: "fn.130519.xyz", name: "CF优选·130519" },
-  { server: "xn--b6gac.eu.org", name: "CF优选·b6gac" },
-  { server: "dns.cloudflare-dns.com", name: "CF·dns" },
-  { server: "coori.cloudflareaccess.com", name: "CF·access" },
-  { server: "links1.cloudflare.com", name: "CF·links1" },
-  { server: "cdnjs.cloudflare.com", name: "CF·cdnjs" },
-  { server: "www.visa.cn", name: "伪装·VISA" },
-  { server: "www.visa.com", name: "伪装·VISA·COM" },
-  { server: "www.visa.com.hk", name: "伪装·VISA·HK" },
-  { server: "time.is", name: "伪装·TimeIs" },
+  { server: "cf.090227.xyz", name: "CF优选·cf.090227.xyz" },
+  { server: "www.visa.com", name: "伪装·www.visa.com" },
+  { server: "saas.sin.fan", name: "CF优选·saas.sin.fan" },
+  { server: "cdns.doon.eu.org", name: "CF优选·cdns.doon.eu.org" },
+  { server: "www.visa.cn", name: "伪装·www.visa.cn" },
+  { server: "time.is", name: "伪装·time.is" },
+  { server: "fn.130519.xyz", name: "CF优选·fn.130519.xyz" },
+  { server: "xn--b6gac.eu.org", name: "CF优选·xn--b6gac.eu.org" },
+  { server: "cloudflare-ip.mofashi.ltd", name: "CF优选·cloudflare-ip.mofashi.ltd" },
+  { server: "coori.cloudflareaccess.com", name: "CF优选·coori.cloudflareaccess.com" },
+  { server: "cf.0sm.com", name: "CF优选·cf.0sm.com" },
+  { server: "cfip.1323123.xyz", name: "CF优选·cfip.1323123.xyz" },
+  { server: "cfip.xxxxxxxx.tk", name: "CF优选·cfip.xxxxxxxx.tk" },
+  { server: "bestcf.030101.xyz", name: "CF优选·bestcf.030101.xyz" },
+  { server: "dns.cloudflare-dns.com", name: "CF优选·dns.cloudflare-dns.com" },
+  { server: "cf.877774.xyz", name: "CF优选·cf.877774.xyz" },
+  { server: "www.visa.com.hk", name: "伪装·www.visa.com.hk" },
 ];
 
 const CLAUDE_RULES = [
