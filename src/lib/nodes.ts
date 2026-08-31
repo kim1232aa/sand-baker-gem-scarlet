@@ -66,6 +66,8 @@ export type LiveExit = {
   geo_country?: string;
   city?: string;
   is_residential?: boolean;
+  /** Fixed datacenter-quota OVPN slots may publish DC egress. */
+  allow_datacenter?: boolean;
   reject_reason?: string;
   check_result?: CheckResult;
 };
@@ -332,19 +334,28 @@ export function buildSocksClashYaml(exits: LiveExit[]): string {
   ].join("\n");
 }
 
+/** CF domain fronts (SNI/Host). Probed 2026-08-31: DNS+TLS-ok only; dead hosts dropped. */
 export const CF_FRONTS: { server: string; name: string }[] = [
+  { server: "bestcf.030101.xyz", name: "CF优选·bestcf" },
   { server: "cf.090227.xyz", name: "CF优选·090227" },
-  { server: "bestcf.030101.xyz", name: "CF优选·移动" },
   { server: "saas.sin.fan", name: "CF优选·MIYU" },
+  { server: "cdn.2020111.xyz", name: "CF优选·2020111" },
+  { server: "cdns.doon.eu.org", name: "CF优选·doon" },
+  { server: "cf.0sm.com", name: "CF优选·0sm" },
+  { server: "cf.877774.xyz", name: "CF优选·877774" },
+  { server: "cfip.1323123.xyz", name: "CF优选·1323123" },
+  { server: "cfip.xxxxxxxx.tk", name: "CF优选·xxxxxxxx" },
+  { server: "cloudflare-ip.mofashi.ltd", name: "CF优选·mofashi" },
+  { server: "fn.130519.xyz", name: "CF优选·130519" },
+  { server: "xn--b6gac.eu.org", name: "CF优选·b6gac" },
+  { server: "dns.cloudflare-dns.com", name: "CF·dns" },
+  { server: "coori.cloudflareaccess.com", name: "CF·access" },
+  { server: "links1.cloudflare.com", name: "CF·links1" },
+  { server: "cdnjs.cloudflare.com", name: "CF·cdnjs" },
   { server: "www.visa.cn", name: "伪装·VISA" },
   { server: "www.visa.com", name: "伪装·VISA·COM" },
   { server: "www.visa.com.hk", name: "伪装·VISA·HK" },
   { server: "time.is", name: "伪装·TimeIs" },
-  { server: "cloudflare.com", name: "CF·cloudflare.com" },
-  { server: "www.cloudflare.com", name: "CF·www" },
-  { server: "cdnjs.cloudflare.com", name: "CF·cdnjs" },
-  { server: "cloudflare-dns.com", name: "CF·dns" },
-  { server: "dash.cloudflare.com", name: "CF·dash" },
 ];
 
 const CLAUDE_RULES = [

@@ -21,8 +21,9 @@ UUID = (BIN / "uuid").read_text().strip() if (BIN / "uuid").exists() else "a3f1c
 
 # vpn_port is a preference; pick_profile falls back to any TCP if that port is empty.
 # Prefer JP/KR (VPNGate TCP 多); TH 常只有 UDP、RO 常空，保留少量试探槽。
+# 48 slots: deepen JP/KR/US + new countries + 3 datacenter-quota slots (allow_datacenter).
 PLAN = [
-    # JP ×8
+    # JP ×12
     {"id": "ovpn-jp", "country": "JP", "port": 9171, "vpn_port": "443"},
     {"id": "ovpn-jp2", "country": "JP", "port": 9174, "vpn_port": "443"},
     {"id": "ovpn-jp3", "country": "JP", "port": 9175, "vpn_port": ""},
@@ -31,7 +32,11 @@ PLAN = [
     {"id": "ovpn-jp6", "country": "JP", "port": 9186, "vpn_port": ""},
     {"id": "ovpn-jp7", "country": "JP", "port": 9187, "vpn_port": ""},
     {"id": "ovpn-jp8", "country": "JP", "port": 9188, "vpn_port": ""},
-    # KR ×8
+    {"id": "ovpn-jp9", "country": "JP", "port": 9198, "vpn_port": ""},
+    {"id": "ovpn-jp10", "country": "JP", "port": 9199, "vpn_port": ""},
+    {"id": "ovpn-jp11", "country": "JP", "port": 9200, "vpn_port": ""},
+    {"id": "ovpn-jp12", "country": "JP", "port": 9201, "vpn_port": ""},
+    # KR ×12
     {"id": "ovpn-kr", "country": "KR", "port": 9172, "vpn_port": "995"},
     {"id": "ovpn-kr2", "country": "KR", "port": 9176, "vpn_port": "995"},
     {"id": "ovpn-kr3", "country": "KR", "port": 9177, "vpn_port": ""},
@@ -40,15 +45,37 @@ PLAN = [
     {"id": "ovpn-kr6", "country": "KR", "port": 9190, "vpn_port": ""},
     {"id": "ovpn-kr7", "country": "KR", "port": 9191, "vpn_port": ""},
     {"id": "ovpn-kr8", "country": "KR", "port": 9192, "vpn_port": ""},
-    # US / RU / VN / others
+    {"id": "ovpn-kr9", "country": "KR", "port": 9202, "vpn_port": ""},
+    {"id": "ovpn-kr10", "country": "KR", "port": 9203, "vpn_port": ""},
+    {"id": "ovpn-kr11", "country": "KR", "port": 9204, "vpn_port": ""},
+    {"id": "ovpn-kr12", "country": "KR", "port": 9205, "vpn_port": ""},
+    # US ×4 / RU ×3
     {"id": "ovpn-us", "country": "US", "port": 9182, "vpn_port": ""},
     {"id": "ovpn-us2", "country": "US", "port": 9193, "vpn_port": ""},
+    {"id": "ovpn-us3", "country": "US", "port": 9206, "vpn_port": ""},
+    {"id": "ovpn-us4", "country": "US", "port": 9207, "vpn_port": ""},
     {"id": "ovpn-ru", "country": "RU", "port": 9194, "vpn_port": ""},
     {"id": "ovpn-ru2", "country": "RU", "port": 9195, "vpn_port": ""},
+    {"id": "ovpn-ru3", "country": "RU", "port": 9208, "vpn_port": ""},
+    # New / deepen coverage
+    {"id": "ovpn-de", "country": "DE", "port": 9209, "vpn_port": ""},
+    {"id": "ovpn-de2", "country": "DE", "port": 9210, "vpn_port": ""},
+    {"id": "ovpn-gb", "country": "GB", "port": 9211, "vpn_port": ""},
+    {"id": "ovpn-gb2", "country": "GB", "port": 9212, "vpn_port": ""},
+    {"id": "ovpn-fr", "country": "FR", "port": 9213, "vpn_port": ""},
+    {"id": "ovpn-fr2", "country": "FR", "port": 9214, "vpn_port": ""},
+    {"id": "ovpn-ca", "country": "CA", "port": 9215, "vpn_port": ""},
+    {"id": "ovpn-ca2", "country": "CA", "port": 9216, "vpn_port": ""},
+    {"id": "ovpn-au", "country": "AU", "port": 9217, "vpn_port": ""},
+    {"id": "ovpn-au2", "country": "AU", "port": 9218, "vpn_port": ""},
     {"id": "ovpn-vn", "country": "VN", "port": 9196, "vpn_port": ""},
     {"id": "ovpn-tw", "country": "TW", "port": 9197, "vpn_port": ""},
     {"id": "ovpn-th", "country": "TH", "port": 9183, "vpn_port": ""},
     {"id": "ovpn-ro", "country": "RO", "port": 9173, "vpn_port": ""},
+    # Datacenter quota (fixed 3 allow ports) — egress DC allowed; prefer DC entries
+    {"id": "ovpn-dc1", "country": "ANY", "port": 9219, "vpn_port": "", "allow_datacenter": True},
+    {"id": "ovpn-dc2", "country": "ANY", "port": 9220, "vpn_port": "", "allow_datacenter": True},
+    {"id": "ovpn-dc3", "country": "ANY", "port": 9221, "vpn_port": "", "allow_datacenter": True},
 ]
 
 _NODES_AT = 0.0
@@ -482,9 +509,18 @@ def select_node(
         _proto, port = parse_proto_port(node.get("config") or "")
         return node if port == want else None
 
+    prefer_dc_entry = bool(slot.get("allow_datacenter"))
+
     def _select(cc: str, *, require_want: bool) -> dict | None:
         # Walk NodePool order (already ping+penalty sorted) instead of refetching.
-        for row in node_pool().list_nodes(cc if cc != "ANY" else "ANY"):
+        # Datacenter-quota slots: annotated DC entries first, but keep pool order
+        # within each group so dial/soft penalties still sink bad SoftEther hosts.
+        rows = node_pool().list_nodes(cc if cc != "ANY" else "ANY")
+        if prefer_dc_entry:
+            dc_rows = [r for r in rows if str(r.get("entry_egress_type") or "").lower() == "datacenter"]
+            other_rows = [r for r in rows if str(r.get("entry_egress_type") or "").lower() != "datacenter"]
+            rows = dc_rows + other_rows
+        for row in rows:
             ip = str(row.get("ip") or "")
             if not ip or ip in excluded_ips:
                 continue
@@ -868,6 +904,7 @@ def slot_status_extra(slot: dict, slot_dir: Path, remote: str = "") -> dict:
         "country_fallback": bool(fallback),
         "fallback_country": fallback or "",
         "target_country": target or "",
+        "allow_datacenter": bool(slot.get("allow_datacenter")),
     }
 
 
@@ -967,10 +1004,15 @@ def gate_ready_exit(slot: dict, slot_dir: Path, ip: str, remote: str) -> dict | 
         )
 
     egress_type = str(meta.get("egress_type") or "unverified").lower()
+    slot_allow_dc = bool(slot.get("allow_datacenter"))
     if egress_type == "residential":
         pass
-    elif egress_type == "datacenter" and allow_non_residential():
-        stamp(f"{slot['id']} allow datacenter via ALLOW_NON_RESIDENTIAL ip={ip}")
+    elif egress_type == "enterprise":
+        # Enterprise/mixed egress is publishable; entry soft-penalty still demotes them at pick time.
+        pass
+    elif egress_type == "datacenter" and (slot_allow_dc or allow_non_residential()):
+        via = "slot-allow_datacenter" if slot_allow_dc else "ALLOW_NON_RESIDENTIAL"
+        stamp(f"{slot['id']} allow datacenter via {via} ip={ip}")
     else:
         reason = "datacenter" if egress_type == "datacenter" else "unknown_type"
         penalty = PENALIZE_DATACENTER if egress_type == "datacenter" else PENALIZE_UNKNOWN
