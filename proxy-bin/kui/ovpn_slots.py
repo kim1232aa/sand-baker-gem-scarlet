@@ -814,6 +814,16 @@ def ensure_socks(nspid: int, slot: dict, slot_dir: Path) -> None:
         time.sleep(0.3)
 
 
+def heal_socks(slot: dict, slot_dir: Path) -> str:
+    """Restart host-fwd/ns-socks while OpenVPN stays up. Returns probe IP or ""."""
+    nspid = make_netns(slot_dir)
+    if not nspid:
+        return ""
+    ensure_socks(nspid, slot, slot_dir)
+    time.sleep(0.4)
+    return probe(slot["port"], timeout=4)
+
+
 def sync_xray(plan: list[dict]) -> bool:
     p = BIN / "xray.json"
     cfg = json.loads(p.read_text())
@@ -1163,6 +1173,15 @@ def bring_up(slot: dict) -> dict:
     # Fast health path: if SOCKS still works, re-validate gates then publish ready.
     if not force:
         ip = probe(slot["port"], timeout=4)
+        # OpenVPN up but host-fwd/ns-socks dead → heal bridge first; don't burn the tunnel.
+        if not ip and openvpn_initialized(slot_dir):
+            fwd_alive = pid_alive(read_pid(slot_dir / "fwd.pid"))
+            ns_alive = pid_alive(read_pid(slot_dir / "ns-socks.pid"))
+            if not (fwd_alive and ns_alive):
+                stamp(f"{slot['id']} socks bridge dead (fwd={int(fwd_alive)} ns={int(ns_alive)}), heal")
+                ip = heal_socks(slot, slot_dir)
+                if ip:
+                    stamp(f"{slot['id']} socks healed ip={ip}")
         if ip:
             set_health_fails(slot_dir, 0)
             set_failures(slot_dir, 0)
@@ -1302,6 +1321,17 @@ def loop() -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     (BIN / "socks").mkdir(exist_ok=True)
     stamp("ovpn slots start")
+    # Manager restart must not inherit half-consumed HEALTH_FAILS → instant 2/2 redial storm.
+    cleared = 0
+    for slot in PLAN:
+        sd = ROOT / slot["id"]
+        if not sd.exists():
+            continue
+        if health_fails_of(sd) > 0:
+            set_health_fails(sd, 0)
+            cleared += 1
+    if cleared:
+        stamp(f"cleared HEALTH_FAILS on {cleared} slots after restart")
     try:
         refresh_nodes(force=True)
     except Exception as e:
